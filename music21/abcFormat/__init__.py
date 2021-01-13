@@ -1649,22 +1649,17 @@ class ABCChord(ABCNote):
 
     def parse(self, forceKeySignature=None, forceDefaultQuarterLength=None):
         '''
-        Handles the following types of chords:
-
-        * Chord without length modifier: [ceg]
-
-        * Chords with outer length modifier: [ceg]2, [ceg]/2
-
-        * Chords with inner length modifier: [c2e2g2], [c2eg]
-
-        * Chords with inner and outer length modifier: [c2e2g2]/2, [c/2e/2g/2]2
+            Chord without length modifier: [ceg]
+            Chords with outer length modifier: [ceg]2, [ceg]/2
+            Cords with inner length modifier: [c2e2g2], [c2eg]
+            Cords with inner and outer length modifier: [c2e2g2]/2, [c/2e/2g/2]2
         '''
 
         self.chordSymbols, nonChordSymStr = self._splitChordSymbols(self.src)
 
         # position of the closing bracket
         pos = nonChordSymStr.index(']')
-        # Length modifier string behind the chord brackets
+        # Length modifier string behind der chord brackets
         outerLengthModifierStr = nonChordSymStr[pos + 1:]
         # String in the chord brackets
         tokenStr = nonChordSymStr[1:pos]
@@ -1673,8 +1668,10 @@ class ABCChord(ABCNote):
         # outerLengthModifierStr', outerLengthModifierStr])
 
         # Get the outer chord length modifier if present
-        outer_lengthModifier = self.getQuarterLength(outerLengthModifierStr,
-                                                     forceDefaultQuarterLength=1.0)
+        outer_lengthModifier = 1.0
+        if outerLengthModifierStr:
+            outer_lengthModifier = self.getQuarterLength(outerLengthModifierStr,
+                                                         forceDefaultQuarterLength=1.0)
 
         if forceKeySignature is not None:
             activeKeySignature = forceKeySignature
@@ -1728,7 +1725,7 @@ class ABCHandler:
     define new phrases.  This is useful for parsing extra information from
     the Essen Folksong repertory
 
-    New in v6.3 -- lineBreaksDefinePhrases -- does not yet do anything
+    New in v6.2 -- lineBreaksDefinePhrases -- does not yet do anything
     '''
     def __init__(self, abcVersion=None, lineBreaksDefinePhrases=False):
         # tokens are ABC objects import n a linear stream
@@ -2230,6 +2227,8 @@ class ABCHandler:
                 # find outer chord length modifier
                 while j < self.srcLen and (self.strSrc[j].isdigit() or self.strSrc[j] in '/'):
                     j += 1
+
+
 
                 # prepend chord symbol
                 if activeChordSymbol != '':
