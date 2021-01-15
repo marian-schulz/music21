@@ -408,6 +408,11 @@ class ABCMetadata(ABCToken):
         >>> am.getKeySignatureParameters()
         ('E-', 'lydian', [])
 
+        >>> am = abcFormat.ABCMetadata('K:C ^d')
+        >>> am.preParse()
+        >>> am.getKeySignatureParameters()
+        ('C', 'major', ['D#'])
+
         >>> am = abcFormat.ABCMetadata('K:APhry')
         >>> am.preParse()
         >>> am.getKeySignatureParameters()
@@ -441,6 +446,11 @@ class ABCMetadata(ABCToken):
         >>> am = abcFormat.ABCMetadata('K:Hp')
         >>> am.preParse()
         >>> am.getKeySignatureParameters()
+        ('D', None, ['F#', 'C#'])
+
+        >>> am = abcFormat.ABCMetadata('K:HP')
+        >>> am.preParse()
+        >>> am.getKeySignatureParameters()
         ('C', None, [])
 
         >>> am = abcFormat.ABCMetadata('K:G ionian')
@@ -453,20 +463,20 @@ class ABCMetadata(ABCToken):
         >>> am.getKeySignatureParameters()
         ('G', 'aeolian', [])
 
-        >>> am = abcFormat.ABCMetadata('K:C ^f _d')
+        >>> am = abcFormat.ABCMetadata('K:Cm ^f _d')
         >>> am.preParse()
         >>> am.getKeySignatureParameters()
-        ('C', 'major', ['D#', 'D-'])
+        ('C', 'minor', ['F#', 'D-'])
 
-        >>> am = abcFormat.ABCMetadata('K:HP')
+        >>> am = abcFormat.ABCMetadata('K:G major =F')
         >>> am.preParse()
         >>> am.getKeySignatureParameters()
-        ('D', None, ['D#', 'D-'])
+        ('G', 'major', ['Fn'])
 
         >>> am = abcFormat.ABCMetadata('K:E exp ^c _a')
         >>> am.preParse()
         >>> am.getKeySignatureParameters()
-        ('E', None, ['D#', 'D-'])
+        ('E', None, ['C#', 'A-'])
         '''
         # placing this import in method for now; key.py may import this module
         from music21 import key
@@ -481,70 +491,67 @@ class ABCMetadata(ABCToken):
         # The spaces can be left out, capitalisation is ignored for the modes
         # The key signatures may be modified by adding accidentals, according to the
         # format K:<tonic> <mode> <accidentals>.
-        RE_MATCH_MODE = re.compile('(?P<tonic>([A-G][#b]?)|(H[pP]))[ ]*(?P<mode>[a-zA-Z]*)([ ]+(?P<accidentials>.*))?')
+        RE_MATCH_MODE = re.compile('(?P<tonic>(H[pP])|([A-G][#b]?))[ ]*(?P<mode>[a-zA-Z]*)([ ]*(?P<accidentals>.*))')
 
         # It is possible to use the format K:<tonic> exp <accidentals> to explicitly
         # define all the accidentals of a key signature.
-        RE_MATCH_EXP = re.compile('(?P<tonic>([A-G]?[#b]?)|H[pP])[ ]+exp[ ]+(?P<accidentials>.*)')
+        RE_MATCH_EXP = re.compile('(?P<tonic>(H[pP])|([A-G]?[#b]?))[ ]+exp[ ]+(?P<accidentals>.*)')
 
         # abc uses b for flat and # for sharp in key tonic spec only
         keyNameMatch = {'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'G#', 'A#',
                         'F', 'Bb', 'Eb', 'D#', 'Ab', 'E#', 'Cb', 'C#', 'Gb', 'Cb'}
 
+        # ABC accidentals mapped to m21 accidentals
         accidentalMap = {'=': 'n', '_': '-', '__': '--', '^': '#', '^^': '##'}
 
-        modeMap = { 'dor': 'dorian', 'phr': 'phrygian', 'lyd': 'lydian', 'mix': 'mixolydian',
-                    'maj': 'major', 'ion': 'ionian', 'aeo': 'aeolian', 'loc': 'locrian',
-                    'min': 'minor', 'm': 'minor' }
+        modeMap = {'dor': 'dorian', 'phr': 'phrygian', 'lyd': 'lydian', 'mix': 'mixolydian',
+                   'maj': 'major', 'ion': 'ionian', 'aeo': 'aeolian', 'loc': 'locrian',
+                   'min': 'minor', 'm': 'minor'}
 
         keyStr = self.data.strip()
-        t, m, a = None, None, None
+
         # use a 'C' as fallback (Not abc conform but a usefull estimate)
         tonic = 'C'
-        mode = 'None'
-        accidentals = {}
+        mode = None
 
         match = RE_MATCH_EXP.match(keyStr)
         if not match:
            match = RE_MATCH_MODE.match(keyStr)
            if match:
-               m = match.groupdict()['mode']
                # Major is the default mode if mode is missing or invalid
                # Only the first 3 letters of the mode are evaluated
-               m = m[:3].lower()
-               mode = 'major' if m is None else modeMap.get(m, 'major')
+               m = match.groupdict()['mode'][:3].lower()
+               mode = 'major' if not m else modeMap.get(m, 'major')
            else:
                # Use 'C major' with no or invalid KeySignature String
                # Not abc conform but a usefull estimate
                return ('C', 'major', [])
 
         t = match.groupdict()['tonic']
-        a = match.groupdict()['accidentials']
-        accidentials = {}
+        a = match.groupdict()['accidentals'].strip()
+        accidentals = {}
 
+        if t == 'Hp':
+            tonic = 'D'
+            mode = None
+            accidentals = {'F':'#', 'C': '#'}
+        elif t == 'HP':
+            tonic = 'C'
+            mode = None
+        elif t in keyNameMatch:
+            # replace abc flat(b) with m21 flat(-)
+            t = t.replace('b','-')
+            tonic = t
 
-        if t is not None:
-            if t == 'Hp':
-                tonic = 'C'
-            elif t == 'HP':
-                tonic = 'D'
-                accidentials = {'F':'#', 'C': '#'}
-            elif t in keyNameMatch:
-                # replace abc flat(b) with m21 flat(-)
-                t = t.replace('b','-')
-                tonic = t
+        for accStr in a.split():
+            # last char is the note symbol
+            note = accStr[-1].upper()
+            # the leading chars are accidentals =,^,_
+            acc = accStr[:-1]
+            if acc in accidentalMap and note in 'ABCDEFG':
+                accidentals[note] = accidentalMap[acc]
 
-        if a is not None:
-           a = a.strip()
-           for accStr in a:
-                # last char is the note symbol
-                note = accStr[-1].upper()
-                # the leading chars are accidentials =,^,_
-                acc = accStr[:-1]
-                if acc in accidentalMap and note in 'ABCDEFG':
-                    accidentials[note] = accidentalMap[acc]
-
-        return (tonic, mode, [f"{n}{a}" for n,a in accidentials.items()])
+        return (tonic, mode, [f"{n}{a}" for n,a in accidentals.items()])
 
     def getKeySignatureObject(self):
         # noinspection SpellCheckingInspection,PyShadowingNames
@@ -552,6 +559,14 @@ class ABCMetadata(ABCToken):
         Return a music21 :class:`~music21.key.KeySignature` or :class:`~music21.key.Key`
         object for this metadata tag.
 
+
+        >>> am = abcFormat.ABCMetadata('K:G ^d')
+        >>> am.preParse()
+        >>> ks = am.getKeySignatureObject()
+        >>> ks
+        <music21.key.KeySignature of pitches: [F#, D#]>
+        >>> ks.alteredPitches
+        [<music21.pitch.Pitch F#>, <music21.pitch.Pitch D#>]
 
         >>> am = abcFormat.ABCMetadata('K:G')
         >>> am.preParse()
@@ -567,34 +582,88 @@ class ABCMetadata(ABCToken):
         >>> ks.sharps
         -2
 
-        >>> am = abcFormat.ABCMetadata('K:E exp ^c _a')
+        >>> am = abcFormat.ABCMetadata('K:E exp ^c ^a')
         >>> am.preParse()
         >>> ks = am.getKeySignatureObject()
+        >>> ks.alteredPitches
+        [<music21.pitch.Pitch C#>, <music21.pitch.Pitch A#>]
         >>> ks
-        <music21.key.Key of g minor>
+        <music21.key.KeySignature of pitches: [C#, A#]>
 
-        Note that capitalization does not matter
-        (http://abcnotation.com/wiki/abc:standard:v2.1#kkey)
-        so this should still be minor.
 
         >>> am = abcFormat.ABCMetadata('K:GM')
         >>> am.preParse()
         >>> ks = am.getKeySignatureObject()
         >>> ks
         <music21.key.Key of g minor>
+
+        >>> am = abcFormat.ABCMetadata('K:Hp')
+        >>> am.preParse()
+        >>> am.getKeySignatureObject()
+        <music21.key.KeySignature of pitches: [F#, C#]>
+
+        >>> am = abcFormat.ABCMetadata('K:HP')
+        >>> am.preParse()
+        >>> am.getKeySignatureObject()
+        <music21.key.KeySignature of no sharps or flats>
+
+        >>> am = abcFormat.ABCMetadata('K:G =F')
+        >>> am.preParse()
+        >>> am.getKeySignatureObject()
+        <music21.key.KeySignature of pitches: []>
+
+        >>> am = abcFormat.ABCMetadata('K:C =c')
+        >>> am.preParse()
+        >>> am.getKeySignatureObject()
+        <music21.key.Key of C major>
+
+        >>> am = abcFormat.ABCMetadata('K:C ^c =c')
+        >>> am.preParse()
+        >>> am.getKeySignatureObject()
+        <music21.key.Key of C major>
+
+        >>> am = abcFormat.ABCMetadata('K:C ^c _c')
+        >>> am.preParse()
+        >>> am.getKeySignatureObject()
+        <music21.key.KeySignature of pitches: [C-]>
         '''
         if not self.isKey():
             raise ABCTokenException('no key signature associated with this metadata')
         from music21 import key
-        # return values of getKeySignatureParameters are sharps, mode
-        # need to unpack list w/ *
-        tonic, mode, accidentials = self.getKeySignatureParameters()
+        tonic, mode, accidentals = self.getKeySignatureParameters()
         if mode:
+            # there is no mode without tonic
             ks = key.Key(tonic, mode)
-        else:
+            if accidentals:
+                # Apply the additional altered pitches on the given altered pitches of the key
+                newAltPitch =  { p.name[0]: p.name[1:] for p in ks.alteredPitches }
+                change = False
+                for a in accidentals:
+                    note, acc = a[0], a[1:]
+                    if acc == 'n':
+                        if note in newAltPitch:
+                            del newAltPitch[note]
+                            change = True
+                    else:
+                        if note in newAltPitch:
+                            if acc != newAltPitch[note]:
+                                newAltPitch[note] = acc
+                                change = True
+                        else:
+                            newAltPitch[note] = acc
+                            change = True
+
+                if change:
+                    # if the set of altered pitches of the giveyn key has changed
+                    # we create a Keysignature with the changed pitch set
+                    ks = key.KeySignature()
+                    ks.alteredPitches = [f"{n}{a}" for n,a in newAltPitch.items()]
+
+        elif accidentals:
             ks = key.KeySignature()
-            ks.alteredPitches = accidentials
-            print(ks)
+            ks.alteredPitches = accidentals
+        else:
+            ks = key.KeySignature(0)
 
         return ks
 
@@ -3849,4 +3918,30 @@ _DOC_ORDER = [ABCFile, ABCHandler, ABCHandlerBar]
 if __name__ == '__main__':
     # sys.arg test options will be used in mainTest()
     import music21
+
+    def getKeyByTonicAndKeySig(tonic, altered_pitches):
+        pitches = { 'A': 'A', 'B': 'B', 'C': 'C', 'D': 'D', 'E': 'E', 'F': 'F', 'G': 'G'}
+        for pitch in altered_pitches:
+            pitches[pitch[0]] = pitch
+
+        # iterate all names in sclae module
+        for name in music21.scale.__dict__.values():
+            # we are looking from ConreteScales derived Scale
+            if isinstance(name, type) and issubclass(name,music21.scale.ConcreteScale) \
+                and name != music21.scale.ConcreteScale:
+                # find closest-matching ConcreteScale based on the pitch collection
+                try:
+                    sc = name('G').derive(other=pitches.values())
+                    if sc.tonic.name == tonic:
+                        return music21.key.Key('G', sc.type)
+                except music21.scale.ScaleException:
+                    pass
+        # No known Key is matching the tomic & keysig
+        return None
+
+    #k = music21.key.Key('G', 'major')
+    #print(k.pitches)
+    #print([getKeyByTonicAndKeySig('G', [])])
+    #s = sc1.derive(, comparisonAttribute='name')
+    #print(s.tonic)
     music21.mainTest(Test)
