@@ -133,7 +133,6 @@ B,,z [FDB,]z A,,z [ECA,]z| \
 B,,z [ECA,]z B,,z [FDB,]
 
 '''
-
 # http://abcnotation.com/tunePage?a=abc.sourceforge.net/NMD/nmd/reelsh-l.txt/0056
 # noinspection SpellCheckingInspection
 kitchGirl = '''X: 57
@@ -143,7 +142,7 @@ S:via PR
 M:4/4
 L:1/4
 K:D
-'A"[c2 a2 ]"G"[B2g2]|"A"e/2f/2e/2d/2 cc/2d/2|"A"e/2c/2e/2f/2 "G"g/2a/2b/2a/2|\
+"A"[c2 a2 ]"G"[B2g2]|"A"e/2f/2e/2d/2 cc/2d/2|"A"e/2c/2e/2f/2 "G"g/2a/2b/2a/2|\
 "E"^ge ee/2=g/2|
 "A"a/2b/2a/2f/2 "G"g/2a/2g/2f/2|"A"e/2f/2e/2d/2 c/2d/2e/2f/2|\
 "G"gd "E"e/2f/2e/2d/2|"A"cA A2::

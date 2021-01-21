@@ -1224,6 +1224,13 @@ class ABCBrokenRhythmMarker(ABCToken):
         '''
         self.data = self.src.strip()
 
+class ABCChordSymbol(ABCToken):
+    '''
+    Grace note end
+    '''
+    def __init__(self, src):
+        super().__init__(src[1:-1])
+
 
 class ABCNote(ABCToken):
     '''
@@ -1655,14 +1662,16 @@ class ABCChord(ABCNote):
             Chords with inner and outer length modifier: [c2e2g2]/2, [c/2e/2g/2]2
         '''
 
-        self.chordSymbols, nonChordSymStr = self._splitChordSymbols(self.src)
+        #self.chordSymbols, nonChordSymStr = self._splitChordSymbols()
 
         # position of the closing bracket
-        pos = nonChordSymStr.index(']')
+
+        pos = self.src.index(']')
+
         # Length modifier string behind the chord brackets
-        outerLengthModifierStr = nonChordSymStr[pos + 1:]
+        outerLengthModifierStr = self.src[pos + 1:]
         # String in the chord brackets
-        tokenStr = nonChordSymStr[1:pos]
+        tokenStr = self.src[1:pos]
 
         # environLocal.printDebug(['ABCChord:', nonChordSymStr, 'tokenStr', tokenStr, '
         # outerLengthModifierStr', outerLengthModifierStr])
@@ -1711,8 +1720,44 @@ class ABCChord(ABCNote):
         # they should be multiplied. Example: [C2E2G2]3 has the same meaning as [CEG]6.
         self.quarterLength = outer_lengthModifier * inner_quarterLength
 
-
+BARLINES = r"|".join([ r':\|[12]?', r'[\|][\|\]:12]?', r'[\[][\|12]', r'[:][\|:]?'])
+#END = '(%.*)?$'
+TOKEN_SPEC = {
+    'ABC_VERSION': (r'^[ ]*%abc-.*', None),
+    'DIRECTIVE': (r'^%%.*', None),
+    'COMMENT': ('[ ]*%.*$', None),
+    'CHORD_SYMBOL': (r'"[^"]*"', ABCChordSymbol),
+    'LINE_CONTINUE': (r'[\\\\][ ]*$', None),
+    'INLINE_FIELD': (r'\[[A-Zwms]:[^\]]*\]', None),
+    'TUPLET_GENERAL': (r'\([2-9]([:][2-9]?([:][2-9]?)?)?', ABCTuplet),
+    'TUPLET_SIMPLE': (r'\([2-9]', ABCTuplet),
+    'BARLINE': (BARLINES, ABCBar),
+    'FIELD': (r'[A-Zwmsrs+]:[^|].*', ABCMetadata),
+    'CHORD': (r'[\[][^\]]*[\]][0-9]*[/]*[0-9]*', ABCChord),
+    'TIE': (r'-', ABCTie),
+    'NOTE': (r'[\^_=]*[a-gA-GzZ][\',]*[0-9]*[/]*[0-9]*', ABCNote),
+    'ACCENT': (r'[K]', ABCAccent),
+    'CRESENDO': (r'!(crescendo|<)[\(]!', ABCCrescStart),
+    'DIMINUENDO': (r'!(diminuendo|>)[\(]!', ABCDimStart),
+    'DIMINUENDO_STOP': (r'!(diminuendo|[>])[\)]!', ABCParenStop),
+    'CRESENDO_STOP': (r'!(crescendo|[>])[\)]!', ABCParenStop),
+    'SLUR': (r'\((?=[^0-9])', ABCSlurStart),
+    'SLUR_STOP': (r'\)', ABCParenStop),
+    'BROKEN_RYTHM': (r'[>]+|[<]+', ABCBrokenRhythmMarker),
+    'GRACE': (r'{', ABCGraceStart),
+    'GRACE_STOP': (r'}', ABCGraceStop),
+    'STACCATO': (r'\.', ABCStaccato),
+    'TENUTO': (r'M', ABCTenuto),
+    'STRACCENT': (r'k', ABCStraccent),
+    'DOWNBOW': (r'v', ABCDownbow),
+    'UPBOW': (r'u', ABCUpbow),
+    'UNKNOWN_DECORATION': (r'![^!]+!', None),
+    'WHITESPACE': (r'[ ]+', None),
+}
+TOKEN_RE = re.compile(r'|'.join(r'(?P<%s>%s)' % (k, v[0]) for k, v in TOKEN_SPEC.items()), re.MULTILINE)
 # ------------------------------------------------------------------------------
+NOTE_RE = re.compile(r'(?P<PRE>[~\^=_HLOPST]*)(?P<PITCH>[a-gA-Gz])(?P<POST>[\',0-9/]*)')
+
 class ABCHandler:
     '''
     An ABCHandler is able to divide elements of a character stream into objects and handle
@@ -1727,6 +1772,7 @@ class ABCHandler:
 
     New in v6.2 -- lineBreaksDefinePhrases -- does not yet do anything
     '''
+
     def __init__(self, abcVersion=None, lineBreaksDefinePhrases=False):
         # tokens are ABC objects import n a linear stream
         self.abcVersion = abcVersion
@@ -2011,8 +2057,77 @@ class ABCHandler:
             return True
         return False
 
-
     def tokenize(self, strSrc: str) -> None:
+        """
+        >>> abch = abcFormat.ABCHandler()
+        >>> abch.tokens
+        []
+        >>> abch.tokenize('X: 1')
+        >>> abch.tokens
+        [<music21.abcFormat.ABCMetadata 'X: 1'>]
+
+        >>> abch = abcFormat.ABCHandler()
+        >>> abch.tokenize('(6f')
+        >>> abch.tokens
+        [<music21.abcFormat.ABCTuplet '(6'>, <music21.abcFormat.ABCNote 'f'>]
+
+        >>> abch = abcFormat.ABCHandler()
+        >>> abch.tokenize('(6:4f')
+        >>> abch.tokens
+        [<music21.abcFormat.ABCTuplet '(6:4'>, <music21.abcFormat.ABCNote 'f'>]
+
+        >>> abch = abcFormat.ABCHandler()
+        >>> abch.tokenize('(6:4:2f')
+        >>> abch.tokens
+        [<music21.abcFormat.ABCTuplet '(6:4:2'>, <music21.abcFormat.ABCNote 'f'>]
+
+        >>> abch = abcFormat.ABCHandler()
+        >>> abch.tokenize('(6::2f')
+        >>> abch.tokens
+        [<music21.abcFormat.ABCTuplet '(6::2'>, <music21.abcFormat.ABCNote 'f'>]
+        """
+        token_list = []
+        t = list(TOKEN_RE.finditer(strSrc))
+        for m in t:
+            rule = m.lastgroup
+            value = m.group()
+
+            if rule == 'DIRECTIVE':
+                directiveMatches = reDirective.match(value)
+                if directiveMatches:
+                    directiveKey = directiveMatches.group(1)
+                    directiveValue = directiveMatches.group(2)
+                    self.abcDirectives[directiveKey] = directiveValue
+                continue
+
+            if rule in ['COMMENT', 'LINEFEED', 'WHITESPACE', 'UNKNOWN_DECORATION']:
+                continue
+
+            if rule == 'ABC_VERSION':
+                continue
+
+            # remove comment
+            value = value.split('%', 1)[0].lstrip()
+
+            if rule == 'BARLINE':
+                for tokenSub in self.barlineTokenFilter(value):
+                    token_list.append(tokenSub)
+                continue
+
+            regex, token_class = TOKEN_SPEC[rule]
+            if token_class:
+                try:
+                    token = token_class(src=value)
+                except Exception as e:
+                    raise ABCHandlerException(f'Call {token_class} failed: {e}')
+
+                token_list.append(token)
+            else:
+                raise ABCHandlerException(f'No token class definition for rule "{rule}" with matching regex "{regex}"')
+
+        self.tokens = token_list
+
+    def tokenize_old(self, strSrc: str) -> None:
         '''
         Walk the abc string, creating ABC objects along the way.
 
@@ -2049,16 +2164,7 @@ class ABCHandler:
         self.srcLen = len(strSrc)
         self.strSrc = strSrc
         self.pos = -1
-        self.currentCollectStr = ''
         self.skipAhead = 0
-        # noinspection SpellCheckingInspection
-        accidentalsAndDecorations = '.~^=_HLMOPSTuv'
-        accidentals = '^=_'
-
-        activeChordSymbol = ''  # accumulate, then prepend
-        accidentalized = {}
-        accidental = None
-        abcPitch = None  # ABC substring defining any pitch within the current token
         self.isFirstComment = True
 
         while self.pos < self.srcLen - 1:
@@ -2071,7 +2177,8 @@ class ABCHandler:
             q = self._getLinearContext(self.strSrc, self.pos)
             unused_cPrev, c, cNext, cNextNext = q
             # cPrevNotSpace, cPrev, c, cNext, cNextNotSpace, cNextNext = q
-
+            if c == '\n':
+                continue
             # comment lines, also encoding defs
             if c == '%':
                 self.processComment()
@@ -2081,9 +2188,9 @@ class ABCHandler:
                 # collect until end of line; add one to get line break
                 j = self._getNextLineBreak(self.strSrc, self.pos)
                 self.skipAhead = j - (self.pos + 1)
-                self.currentCollectStr = self.strSrc[self.pos:j].strip()
-                # environLocal.printDebug(['got metadata:', repr(self.currentCollectStr)])
-                self.tokens.append(ABCMetadata(self.currentCollectStr))
+                meta = self.strSrc[self.pos:j].strip()
+                meta = meta.split('%',1)[0]
+                self.tokens.append(ABCMetadata(meta))
                 continue
 
             # get bars: if not a space and not alphanumeric
@@ -2112,9 +2219,8 @@ class ABCHandler:
                     accidentalized = {}
                     accidental = None
                     j = self.pos + self.skipAhead + 1
-                    self.currentCollectStr = self.strSrc[self.pos:j]
                     # filter and replace with 2 tokens if necessary
-                    for tokenSub in self.barlineTokenFilter(self.currentCollectStr):
+                    for tokenSub in self.barlineTokenFilter(self.strSrc[self.pos:j]):
                         self.tokens.append(tokenSub)
                     # environLocal.printDebug(['got bars:', repr(self.currentCollectStr)])
                     # if self.currentCollectStr == '::':
@@ -2144,9 +2250,9 @@ class ABCHandler:
                             j += 1
                             self.skipAhead += 1
 
-                self.currentCollectStr = self.strSrc[self.pos:j]
+                currentCollectStr = self.strSrc[self.pos:j]
                 # environLocal.printDebug(['got tuplet start:', repr(self.currentCollectStr)])
-                self.tokens.append(ABCTuplet(self.currentCollectStr))
+                self.tokens.append(ABCTuplet(currentCollectStr))
                 continue
 
             # get broken rhythm modifiers: < or >, >>, up to <<<
@@ -2154,10 +2260,9 @@ class ABCHandler:
                 j = self.pos + 1
                 while j < self.srcLen - 1 and self.strSrc[j] in '<>':
                     j += 1
-                self.currentCollectStr = self.strSrc[self.pos:j]
                 # environLocal.printDebug(
                 #     ['got bidrectional rhythm mod:', repr(self.currentCollectStr)])
-                self.tokens.append(ABCBrokenRhythmMarker(self.currentCollectStr))
+                self.tokens.append(ABCBrokenRhythmMarker(self.strSrc[self.pos:j]))
                 self.skipAhead = j - (self.pos + 1)
                 continue
 
@@ -2174,7 +2279,7 @@ class ABCHandler:
                     if self.strSrc[j] == '!':
                         if self.strSrc[self.pos:j + 1] in exclaimDict:
                             exclaimClass = exclaimDict[self.strSrc[self.pos:j + 1]]
-                            exclaimObject = exclaimClass(c)
+                            exclaimObject = exclaimClass(self.strSrc[self.pos:j + 1])
                             self.tokens.append(exclaimObject)
                             self.skipAhead = j - self.pos  # not + 1
                             break
@@ -2209,38 +2314,10 @@ class ABCHandler:
                     j += 1
                 j += 1  # need character that caused break
                 # there may be more than one chord symbol: need to accumulate
-                activeChordSymbol += self.strSrc[self.pos:j]
+                activeChordSymbol = self.strSrc[self.pos:j]
                 # environLocal.printDebug(['got chord symbol:', repr(activeChordSymbol)])
                 self.skipAhead = j - (self.pos + 1)
-                continue
-
-            # get chords
-            if c == '[':
-                j = self.pos + 1
-
-                # find closing chord bracket
-                while j < self.srcLen - 1 and self.strSrc[j] != ']':
-                    j += 1
-
-                j += 1  # need character that caused break
-
-                # find outer chord length modifier
-                while j < self.srcLen and (self.strSrc[j].isdigit() or self.strSrc[j] in '/'):
-                    j += 1
-
-                # prepend chord symbol
-                if activeChordSymbol != '':
-                    self.currentCollectStr = activeChordSymbol + self.strSrc[self.pos:j]
-                    activeChordSymbol = ''  # reset
-                else:
-                    self.currentCollectStr = self.strSrc[self.pos:j]
-
-                # environLocal.printDebug(['got chord:', repr(self.currentCollectStr)])
-                self.tokens.append(ABCChord(self.currentCollectStr))
-                self.skipAhead = j - (self.pos + 1)
-                # TODO: Chords need to be aware of accidentals too.
-                # Also what happens to prefixes and suffixes attached to chords,
-                # like ties.
+                self.tokens.append(ABCChordSymbol(activeChordSymbol))
                 continue
 
             if c == '.':
@@ -2275,129 +2352,39 @@ class ABCHandler:
                 self.tokens.append(ABCTenuto(c))
                 continue
 
-            # get the start of a note event: alpha, decoration, or accidental
-            if c.isalpha() or c in '~^=_':
-                # condition where we start with an alpha that is not an alpha
-                # that comes before a pitch indication
-                # From the 2.2 draft standard, we see the following "decorations"
-                # defined:
-                #     .       staccato mark
-                #     ~       Irish roll
-                #     H       fermata
-                #     L       accent or emphasis
-                #     M       lower mordent
-                #     O       coda
-                #     P       upper mordent
-                #     S       segno
-                #     T       trill
-                #     u       up-bow
-                #     v       down-bow
-                #
-                # Accidentals are these:
-                #     ^       sharp
-                #     ^^      double-sharp
-                #     =       natural
-                #     _       flat
-                #     __      double-flat
-                foundPitchAlpha = c.isalpha() and c not in accidentalsAndDecorations
-                if foundPitchAlpha:
-                    abcPitch = c
-                if c in accidentals:
-                    accidental = c
-                j = self.pos + 1
-
-                while j <= self.srcLen - 1:
-                    # if we have not found pitch alpha
-                    # decorations and/or accidentals may precede note names
-                    if not foundPitchAlpha and self.strSrc[j] in accidentalsAndDecorations:
-                        j += 1
-                        if self.strSrc[j] in accidentals:
-                            accidental += self.strSrc[j]
-                        continue
-                    # only allow one pitch alpha to be a continue condition
-                    elif (not foundPitchAlpha and self.strSrc[j].isalpha()
-                          # noinspection SpellCheckingInspection
-                          and self.strSrc[j] not in '~wuvhHLTSN'):
-                        foundPitchAlpha = True
-                        abcPitch = self.strSrc[j]
-                        j += 1
-                        continue
-                    # continue conditions after alpha:
-                    # , register modification (, ') or number, rhythm indication
-                    # number, /,
-                    elif self.strSrc[j].isdigit() or self.strSrc[j] in ',/,\'':
-                        if self.strSrc[j] in ',\'':  # Register (octave) modification
-                            abcPitch += self.strSrc[j]
-                        j += 1
-                        continue
-                    else:  # space, all else: break
-                        break
-                # prepend chord symbol
-                if activeChordSymbol != '':
-                    self.currentCollectStr = activeChordSymbol + self.strSrc[self.pos:j]
-                    activeChordSymbol = ''  # reset
+            if c.isalpha() or c in '~^=_[':
+                start = self.strSrc[self.pos:]
+                note_match = NOTE_RE.match(start)
+                if note_match:
+                    g = note_match.groupdict()
+                    accidential = "".join(s for s in g['PRE'] if s in "=^_")
+                    octave = "".join(s for s in g['POST'] if s in ",'")
+                    durations = "".join(s for s in g['POST'] if s in "/1234567890")
+                    self.tokens.append(ABCNote(f'{accidential}{g["PITCH"]}{octave}{durations}'))
+                    p = note_match.end() -1
+                    self.skipAhead = p
                 else:
-                    self.currentCollectStr = self.strSrc[self.pos:j]
-                # environLocal.printDebug(['got note event:', repr(self.currentCollectStr)])
+                    CHORD_RE = re.compile(r'(?P<PRE>[~HLOPST]*)(?P<PITCHES>[\[].[^\]]*[\]])(?P<POST>[0-9/]*)')
+                    chord_match = CHORD_RE.match(start)
+                    if chord_match:
+                        g = chord_match.groupdict()
+                        durations = "".join(s for s in g['POST'] if s in "/1234567890")
+                        self.tokens.append(ABCChord(f'{g["PITCHES"]}{durations}'))
+                        p = chord_match.end() - 1
+                        self.skipAhead = p
 
-                # NOTE: skipping a number of articulations and other markers
-                # that are not yet supported
-                # some collections here are not yet supported; others may be
-                # the result of errors in encoded files
-                # v is up bow; might be: "^Segno"v which also should be dropped
-                # H is fermata
-                # . dot may be staccato, but should be attached to pitch
-                if self.currentCollectStr in ('w', 'u', 'v', 'v.', 'h', 'H', 'vk',
-                               'uk', 'U', '~',
-                               '.', '=', 'V', 'v.', 'S', 's',
-                               'i', 'I', 'ui', 'u.', 'Q', 'Hy', 'Hx',
-                               'r', 'm', 'M', 'n', 'N', 'o', 'O', 'P',
-                               'l', 'L', 'R',
-                               'y', 'T', 't', 'x', 'Z'):
-                    pass
-                # these are bad chords, or other problematic notations like
-                # "D.C."x
-                elif (self.currentCollectStr.startswith('"')
-                      and (self.currentCollectStr[-1] in ('u', 'v', 'k', 'K', 'Q', '.',
-                                                          'y', 'T', 'w', 'h', 'x',)
-                           or self.currentCollectStr.endswith('v.'))):
-                    pass
-                elif (self.currentCollectStr.startswith('x')
-                      or self.currentCollectStr.startswith('H')
-                      or self.currentCollectStr.startswith('Z')):
-                    pass
-                # not sure what =20 refers to
-                elif (len(self.currentCollectStr) > 1
-                      and self.currentCollectStr.startswith('=')
-                      and self.currentCollectStr[1].isdigit()):
-                    pass
-                # only let valid self.currentCollectStr strings be parsed
-                elif abcPitch:
-                    pitchClass = abcPitch[0].upper()
-                    carriedAccidental = None
-                    propagation = self._accidentalPropagation()
-                    if accidental:
-                        # Remember the active accidentals in the measure
-                        if propagation == 'octave':
-                            accidentalized[abcPitch] = accidental
-                        elif propagation == 'pitch':
-                            accidentalized[pitchClass] = accidental
-                        accidental = None
-                    else:
-                        if propagation == 'pitch' and pitchClass in accidentalized:
-                            carriedAccidental = accidentalized[pitchClass]
-                        elif propagation == 'octave' and abcPitch in accidentalized:
-                            carriedAccidental = accidentalized[abcPitch]
-                    abcNote = ABCNote(self.currentCollectStr, carriedAccidental=carriedAccidental)
-                    self.tokens.append(abcNote)
-                else:
-                    self.tokens.append(ABCNote(self.currentCollectStr))
+        #new_token = self.tokenize_new(strSrc)
+        #self.tokens = new_token
+        #return
+        #from itertools import zip_longest
+        #for i, (t1, t2) in enumerate(zip_longest(new_token, self.tokens)):
+        #    if t1.__class__ != t2.__class__ or t1.src != t2.src:
+        #        print('Soure: %s' % strSrc)
+        #        look1 = new_token[i-1:i+4]
+        #        look2 = self.tokens[i-1:i+4]
+        #        print(f'ALARM line {i}')
+        #        exit()
 
-                self.skipAhead = j - (self.pos + 1)
-                continue
-            # look for white space: can be used to determine beam groups
-            # no action: normal continuation of 1 char
-            pass
 
     def tokenProcess(self):
         '''
@@ -3363,7 +3350,13 @@ class Test(unittest.TestCase):
             handler = ABCHandler()
             handler.tokenize(tf)
             tokens = handler.tokens  # get private for testing
-            self.assertEqual(len(tokens), countTokens)
+            # Fix the number of Tokens about the number of additional ChordSymbol
+            chord_symbols = [ cs for cs in tokens if isinstance(cs, ABCChordSymbol)]
+            countTokens += len(chord_symbols)
+            try:
+                self.assertEqual(len(tokens), countTokens)
+            except:
+                raise Exception(tf)
             countNotes = 0
             countChords = 0
             for o in tokens:
@@ -3372,8 +3365,14 @@ class Test(unittest.TestCase):
                 elif isinstance(o, ABCNote):
                     countNotes += 1
 
-            self.assertEqual(countNotes, noteTokens)
-            self.assertEqual(countChords, chordTokens)
+            try:
+                self.assertEqual(countNotes, noteTokens)
+            except:
+                raise Exception(tf)
+            try:
+                self.assertEqual(countChords, chordTokens)
+            except:
+                raise Exception(tf)
 
     def testRe(self):
 
@@ -3723,7 +3722,7 @@ class Test(unittest.TestCase):
 <music21.abcFormat.ABCMetadata 'K: Edor'>
 <music21.abcFormat.ABCNote 'B,2'>
 <music21.abcFormat.ABCBar '|'>
-<music21.abcFormat.ABCDimStart '!'>
+<music21.abcFormat.ABCDimStart '!diminuendo(!'>
 <music21.abcFormat.ABCStaccato '.'>
 <music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCNote '^D'>
@@ -3731,7 +3730,7 @@ class Test(unittest.TestCase):
 <music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCTie '-'>
 <music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCParenStop '!'>
+<music21.abcFormat.ABCParenStop '!diminuendo)!'>
 <music21.abcFormat.ABCSlurStart '('>
 <music21.abcFormat.ABCTuplet '(3'>
 <music21.abcFormat.ABCStaccato '.'>
