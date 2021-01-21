@@ -702,6 +702,9 @@ class Test(unittest.TestCase):
         title = ah.getTitle()
         environLocal.printDebug([title])
         s = translate.abcToStreamScore(ah)
+        us = environment.UserSettings()
+        us['musicxmlPath'] = '~/Anwendungen/MuseScore-3.6.0.451381076-x86_64.AppImage'
+        s.show()
         notes = s.flat.getElementsByClass(note.Note)
         cSharp = notes[3]
         cThrough = notes[5]
@@ -938,4 +941,5 @@ class Test(unittest.TestCase):
 if __name__ == '__main__':
     import music21
     # music21.converter.parse(reelsABC21, format='abc').scores[1].show()
-    music21.mainTest(Test)
+    Test().testAbc21()
+    #music21.mainTest(Test)

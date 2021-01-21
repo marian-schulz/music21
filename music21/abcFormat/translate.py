@@ -263,22 +263,23 @@ def parseTokens(mh, dst, p, useMeasures):
                 mmObj = t.getMetronomeMarkObject()
                 dst.coreAppend(mmObj)
 
+        elif isinstance(t, abcFormat.ABCChordSymbol):
+            cs_name = t.src
+            cs_name = re.sub('["]', '', cs_name).lstrip().rstrip()
+            cs_name = re.sub('[()]', '', cs_name)
+            cs_name = common.cleanedFlatNotation(cs_name)
+            try:
+                if cs_name in ('NC', 'N.C.', 'No Chord', 'None'):
+                    cs = harmony.NoChord(cs_name)
+                else:
+                    cs = harmony.ChordSymbol(cs_name)
+                dst.coreAppend(cs, setActiveSite=False)
+                dst.coreElementsChanged()
+            except ValueError:
+                pass  # Exclude malformed chord
+
         elif isinstance(t, abcFormat.ABCNote):
             # add the attached chord symbol
-            if t.chordSymbols:
-                cs_name = t.chordSymbols[0]
-                cs_name = re.sub('["]', '', cs_name).lstrip().rstrip()
-                cs_name = re.sub('[()]', '', cs_name)
-                cs_name = common.cleanedFlatNotation(cs_name)
-                try:
-                    if cs_name in ('NC', 'N.C.', 'No Chord', 'None'):
-                        cs = harmony.NoChord(cs_name)
-                    else:
-                        cs = harmony.ChordSymbol(cs_name)
-                    dst.coreAppend(cs, setActiveSite=False)
-                    dst.coreElementsChanged()
-                except ValueError:
-                    pass  # Exclude malformed chord
             if t.isRest:
                 n = note.Rest()
             else:
@@ -347,11 +348,11 @@ def parseTokens(mh, dst, p, useMeasures):
                 dst.coreAppend(n, setActiveSite=False)
 
         elif isinstance(t, abcFormat.ABCSlurStart):
-            p.coreAppend(t.slurObj)
+            p.coreAppend(t.m21Object)
         elif isinstance(t, abcFormat.ABCCrescStart):
-            p.coreAppend(t.crescObj)
+            p.coreAppend(t.m21Object)
         elif isinstance(t, abcFormat.ABCDimStart):
-            p.coreAppend(t.dimObj)
+            p.coreAppend(t.m21Object)
     dst.coreElementsChanged()
     return postTransposition, clefSet
 
@@ -797,6 +798,8 @@ class Test(unittest.TestCase):
         # each score in the opus is a Stream that contains a Part and metadata
         p1 = o.getScoreByNumber(1).parts[0]
         self.assertEqual(p1.offset, 0.0)
+        nf = list(p1.flat.notesAndRests)
+        l = len(nf)
         self.assertEqual(len(p1.flat.notesAndRests), 90)
 
         p2 = o.getScoreByNumber(2).parts[0]
