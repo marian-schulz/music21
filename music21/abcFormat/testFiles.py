@@ -260,20 +260,20 @@ K:G mixolydian treble8
 T:Tenor
 %%MIDI transpose -12
 %1
-G3 A B c d B e4 d2 B4 e3 d c2 B2 d4 d2 G  A B c d3 c B4 G4 d3 c
-w:Si- - - - - - - cut ro * -  - sa si- cut ro- - - - - - - sa in- -
+  G3  A B c d B e4 d2 B4 e3 d  c2 B2 d4  d2  G   A B c d3 c B4 G4 d3  c
+w:Si- - - - - - - cut ro *  -  -  sa si- cut ro- - - - -  - -  sa in- -
 %2
-B A G4 F2 E4 "A"D2 A4 B2 c4 B2 d3 c B A G F E D C2 C2 G4 z2 G4 E2 G4 A2 c3 B A G
-w:- - - ter spi- nas il - lis ad- dit spe- - - - - - - -  ci- em, sic ve- nu- stat su- - - -
+  B A G4 F2  E4  "A"D2 A4 B2 c4  B2  d3  c    B A G F E D C2 C2  G4  z2  G4  E2  G4   A2  c3  B A G
+w:- - -  ter spi- nas  il -  lis ad- dit spe- - - - - - - -  ci- em,     sic ve- nu- stat su- - - -
 %3
-_B2 A2 A4 D2 F2 E2 F2 G4 G3 A B2 A2 F2 c2 B2 c2 d2 c3 B d4 c B c A c4 B2 "B"c4 z2 G2 A2 B4 F2 c4
-w:- am vir- go Ma- ri- am pro- ge- - - ni- am Ma- ri- am pro- ge- - - - - - - - ni- am ger- mi- na- vit e-
+_B2 A2 A4   D2 F2  E2  F2 G4   G3  A B2 A2  F2 c2  B2  c2 d2   c3  B d4 c B c A c4 B2 "B"c4 z2 G2   A2  B4  F2 c4
+w:- am vir- go Ma- ri- am pro- ge- - -  ni- am Ma- ri- am pro- ge- - -  - - - - -  ni- am      ger- mi- na- vit e-
 %4
-d2 e3 d/ c/ B c d A d3 c/ B/ c2 "C"d4-d4 z2 d2 e2 d3 B ^c2 d2 e2 c2 G A B c d2 G4 z2 G2
-w:nim flo- - - - - - - - - - - rem, * qui vi- ta- - -  lem dat o- do- - - - - rem qui
+  d2  e3   d/ c/ B c d A d3 c/ B/ c2 "C"d4-d4 z2 d2   e2  d3   B  ^c2   d2  e2  c2  G  A   B c d2 G4  z2  G2
+w:nim flo- -  -  - - - - -  -  -  -   rem, *     qui  vi- ta-  -   -    lem dat o- do- -   - - -  rem     qui
 %5
-A2 G3 E ^F2 G2 A2 c4 B3 A/ G/ A4 HG4 |]
-w:vi- ta- - - lem dat o- do- - - - rem.
+  A2  G3  E ^F2 G2  A2  c4 B3  A/ G/ A4 HG4 |]
+w:vi- ta- - -   lem dat o- do- -  -  -  rem.
 '''
 
 # http://abcnotation.com/tunePage?a=www.campin.me.uk/Embro/Webrelease/Embro/17riot/abc/AleWife/0000
@@ -613,7 +613,7 @@ V:1
 g^G_ag a=ffF|=F2^c2 FB =ca|]
 '''
 
-directiveCarryPitch = '''
+directiveCarryPitch= '''
 %abc-2.1
 %%propagate-accidentals pitch
 X:213
@@ -639,7 +639,34 @@ V:1
 g^G_ag a=ffF|=F2^c2 FB =ca|]
 
 '''
-
+OldMountainDew='''X:1
+T:Old Mountain Dew
+C:Traditional
+M:4/4
+L:1/4
+Q:1/4=200
+K:G
+P:Verse
+"G"D D2 E | G2 A G | d d2 B | G2
+w:1.~I know a place 'bout a mile down the road
+B B | "C"A G2 E | A G E2 | "G"D4- | D2
+w:where you lay down a dol-lar or two._
+D D| D D2 E | G2
+w:If you hush up your mug,
+A G | d d2 B | G2
+w:they will slip you a jug
+A G | B B3 | A2 "D7"A2 | "G"G4- | G3
+w:of that good old moun-tain dew._
+G | D D2 D | E G A G| (B3 A | "G7" G3)
+w:Ch:~They call it that old moun-tain dew,__
+B | "C"AG2 E | A G E2 | "G"D4- | D2
+w:and them that re-fuse it are few._
+B, C | D D2 E | G2
+w:You may go 'round the bend,
+A G | d d2 B | G2
+w:but you'll come back a-gain
+G G | B B3 | A2 "D7"A2 | "G"G4- | G4 |]
+w:for that good old moun-tain dew._'''
 
 # ------------------------------------------------------------------------------
 
@@ -703,8 +730,8 @@ class Test(unittest.TestCase):
         environLocal.printDebug([title])
         s = translate.abcToStreamScore(ah)
         us = environment.UserSettings()
-        us['musicxmlPath'] = '~/Anwendungen/MuseScore-3.6.0.451381076-x86_64.AppImage'
-        s.show()
+        #us['musicxmlPath'] = '~/Anwendungen/MuseScore-3.6.0.451381076-x86_64.AppImage'
+        #s.show()
         notes = s.flat.getElementsByClass(note.Note)
         cSharp = notes[3]
         cThrough = notes[5]
@@ -883,6 +910,24 @@ class Test(unittest.TestCase):
                 self.assertIn(pitch_name, chord_symbol[0].pitchNames,
                               'Pitch not in ChordSymbol of abc: "%s"' % abc_text)
 
+    def testAbc21Lyricl(self):
+        # Test the chord symbol for note and chord
+        from music21 import abcFormat, harmony, stream
+        from music21.abcFormat import translate
+
+        af = abcFormat.ABCFile()
+
+        ah = af.readstr(sicutRosa)
+        s = translate.abcToStreamScore(ah)
+        notes = s.flat.notes
+        self.assertEqual(notes[0].lyric, 'Si')
+        self.assertEqual(notes[22].lyric, 'sa')
+        self.assertEqual(notes[60].lyric, 'ri')
+        self.assertEqual(notes[-1].lyric, 'rem.')
+        ah = af.readstr(OldMountainDew)
+        s = translate.abcToStreamScore(ah)
+        s.show()
+
     def testAbc21BrokenRythm(self):
         # Test the chord symbol for note and chord
         from music21 import abcFormat, note, stream
@@ -940,6 +985,6 @@ class Test(unittest.TestCase):
 
 if __name__ == '__main__':
     import music21
-    # music21.converter.parse(reelsABC21, format='abc').scores[1].show()
-    Test().testAbc21()
-    #music21.mainTest(Test)
+    #music21.converter.parse(reelsABC21, format='abc').scores[1].show()
+    Test().testAbc21Lyricl()
+    music21.mainTest(Test)

@@ -49,6 +49,39 @@ _abcArticulationsToM21 = {
     'tenuto': articulations.Tenuto,
 }
 
+def add_lyric(p: stream.Stream, abcHandler: 'abcFormat.ABCHandler'):
+    """
+    Adds Lyrik from the tokens of the abcHandler to the notes of the
+    Stream.
+    """
+    from music21 import abcFormat
+
+    lyric = [ t.line for t in abcHandler.tokens if isinstance(t, abcFormat.ABCLyric)]
+    all_lyric = []
+    for l in lyric:
+        all_lyric.extend(l)
+
+    iter_lyric = iter(all_lyric)
+    syl = ''
+    for e in p.flat.notes:
+        if isinstance(e, harmony.ChordSymbol):
+            continue
+        try:
+            syl = next(iter_lyric).strip()
+            while not syl:
+                syl = next(iter_lyric).strip()
+                # skip empty words
+                if syl:
+                    break
+            if syl == '_':
+                continue
+            if syl == '*':
+                # a blank syllable
+                continue
+            e.lyric = syl
+        except StopIteration:
+            # No lyric is left, stop
+            break
 
 def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     '''
@@ -219,6 +252,8 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     # remove from original spanner bundle
     for sp in rm:
         spannerBundle.remove(sp)
+
+    add_lyric(p, abcHandler)
     p.coreElementsChanged()
     return p
 
@@ -802,15 +837,15 @@ class Test(unittest.TestCase):
 
         p2 = o.getScoreByNumber(2).parts[0]
         self.assertEqual(p2.offset, 0.0)
-        self.assertEqual(len(p2.flat.notesAndRests), 80)
+        self.assertEqual(len(p2.flat.notesAndRests), 81)
 
         p3 = o.getScoreByNumber(3).parts[0]
         self.assertEqual(p3.offset, 0.0)
-        self.assertEqual(len(p3.flat.notesAndRests), 86)
+        self.assertEqual(len(p3.flat.notesAndRests), 87)
 
         p4 = o.getScoreByNumber(4).parts[0]
         self.assertEqual(p4.offset, 0.0)
-        self.assertEqual(len(p4.flat.notesAndRests), 78)
+        self.assertEqual(len(p4.flat.notesAndRests), 79)
 
         sMerged = o.mergeScores()
         self.assertEqual(sMerged.metadata.title, 'Mille regrets')
@@ -1066,6 +1101,7 @@ class Test(unittest.TestCase):
 
 if __name__ == '__main__':
     import music21
+    #Test().testTuplets()
     music21.mainTest(Test)
 
 
