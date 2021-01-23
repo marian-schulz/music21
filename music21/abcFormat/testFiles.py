@@ -731,7 +731,6 @@ class Test(unittest.TestCase):
         s = translate.abcToStreamScore(ah)
         us = environment.UserSettings()
         #us['musicxmlPath'] = '~/Anwendungen/MuseScore-3.6.0.451381076-x86_64.AppImage'
-        #s.show()
         notes = s.flat.getElementsByClass(note.Note)
         cSharp = notes[3]
         cThrough = notes[5]
@@ -926,7 +925,7 @@ class Test(unittest.TestCase):
         self.assertEqual(notes[-1].lyric, 'rem.')
         ah = af.readstr(OldMountainDew)
         s = translate.abcToStreamScore(ah)
-        s.show()
+        '''@TODO: There is still a bug in 'Old Mountain Dew' lyric mapping'''
 
     def testAbc21BrokenRythm(self):
         # Test the chord symbol for note and chord
