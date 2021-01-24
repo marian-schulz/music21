@@ -3119,7 +3119,6 @@ class TimeSignature(base.Music21Object):
         >>> ts
         <music21.meter.TimeSignature 2/4+3/8>
 
-
         >>> ts.load('fast 6/8')
         >>> ts.beatCount
         2
