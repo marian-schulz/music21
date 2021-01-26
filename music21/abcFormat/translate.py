@@ -30,24 +30,11 @@ from music21 import environment
 from music21 import exceptions21
 from music21 import meter
 from music21 import stream
-from music21 import tie
-from music21 import articulations
-from music21 import note
-from music21 import chord
 from music21 import spanner
 from music21 import harmony
 
 
 environLocal = environment.Environment('abcFormat.translate')
-
-_abcArticulationsToM21 = {
-    'staccato': articulations.Staccato,
-    'upbow': articulations.UpBow,
-    'downbow': articulations.DownBow,
-    'accent': articulations.Accent,
-    'strongaccent': articulations.StrongAccent,
-    'tenuto': articulations.Tenuto,
-}
 
 def add_lyric(p: stream.Stream, abcHandler: 'abcFormat.ABCHandler'):
     """
@@ -298,84 +285,11 @@ def parseTokens(mh, dst, p, useMeasures):
             elif t.isTempo():
                 mmObj = t.getMetronomeMarkObject()
                 dst.coreAppend(mmObj)
+        elif isinstance(t, (abcFormat.ABCChordSymbol, abcFormat.ABCGeneralNote, abcFormat.ABCSpanner)):
+            obj = t.m21Object()
+            if obj is not None:
+                dst.coreAppend(obj, setActiveSite=False)
 
-        elif isinstance(t, abcFormat.ABCChordSymbol):
-            cs_name = t.src
-            cs_name = re.sub('["]', '', cs_name).lstrip().rstrip()
-            cs_name = re.sub('[()]', '', cs_name)
-            cs_name = common.cleanedFlatNotation(cs_name)
-            try:
-                if cs_name in ('NC', 'N.C.', 'No Chord', 'None'):
-                    cs = harmony.NoChord(cs_name)
-                else:
-                    cs = harmony.ChordSymbol(cs_name)
-                dst.coreAppend(cs, setActiveSite=False)
-                dst.coreElementsChanged()
-            except ValueError:
-                pass  # Exclude malformed chord
-
-        elif isinstance(t, abcFormat.ABCNote):
-            # add the attached chord symbol
-            n = t.m21Object()
-
-            # as ABCChord is subclass of ABCNote, handle first
-            if isinstance(t, abcFormat.ABCChord) and t.subTokens:
-                c = t.m21Object()
-                c.duration.quarterLength = t.quarterLength
-                if t.activeTuplet:
-                    thisTuplet = copy.deepcopy(t.activeTuplet)
-                    if thisTuplet.durationNormal is None:
-                        thisTuplet.setDurationType(c.duration.type, c.duration.dots)
-                    c.duration.appendTuplet(thisTuplet)
-                # adjust accidental display for each contained pitch
-                for pIndex in range(len(c.pitches)):
-                    if c.pitches[pIndex].accidental is None:
-                        continue
-                    c.pitches[pIndex].accidental.displayStatus = accStatusList[pIndex]
-                dst.coreAppend(c)
-
-                # ql += t.quarterLength
-            else:
-                n.duration.quarterLength = t.quarterLength
-                if t.activeTuplet:
-                    thisTuplet = copy.deepcopy(t.activeTuplet)
-                    if thisTuplet.durationNormal is None:
-                        thisTuplet.setDurationType(n.duration.type, n.duration.dots)
-                    n.duration.appendTuplet(thisTuplet)
-
-                # start or end a tie at note n
-                if t.tie is not None:
-                    if t.tie in ('start', 'continue'):
-                        n.tie = tie.Tie(t.tie)
-                        n.tie.style = 'normal'
-                    elif t.tie == 'stop':
-                        n.tie = tie.Tie(t.tie)
-                # Was: Extremely Slow for large Opus files... why?
-                # Answer: some pieces didn't close all their spanners, so
-                # everything was in a Slur/Diminuendo, etc.
-                for span in t.applicableSpanners:
-                    span.addSpannedElements(n)
-
-                if t.inGrace:
-                    n = n.getGrace()
-
-                n.articulations = []
-                while any(t.articulations):
-                    tokenArticulationStr = t.articulations.pop()
-                    if tokenArticulationStr not in _abcArticulationsToM21:
-                        continue
-                    m21ArticulationClass = _abcArticulationsToM21[tokenArticulationStr]
-                    m21ArticulationObj = m21ArticulationClass()
-                    n.articulations.append(m21ArticulationObj)
-
-                dst.coreAppend(n, setActiveSite=False)
-
-        elif isinstance(t, abcFormat.ABCSlurStart):
-            p.coreAppend(t.m21Object)
-        elif isinstance(t, abcFormat.ABCCrescStart):
-            p.coreAppend(t.m21Object)
-        elif isinstance(t, abcFormat.ABCDimStart):
-            p.coreAppend(t.m21Object)
     dst.coreElementsChanged()
     return postTransposition, clefSet
 
@@ -712,8 +626,6 @@ class Test(unittest.TestCase):
         s = abcToStreamScore(af.readstr(tf))
         match = []
         # match strings for better comparison
-        for n in s.flat.notesAndRests:
-            match.append(n.quarterLength)
         shouldFind = [
             1 / 3, 1 / 3, 1 / 3,
             1 / 5, 1 / 5, 1 / 5, 1 / 5, 1 / 5,
@@ -724,7 +636,8 @@ class Test(unittest.TestCase):
             1 / 12, 1 / 12, 1 / 12, 1 / 12, 1 / 12, 1 / 12,
             2
         ]
-        self.assertEqual(match, [common.opFrac(x) for x in shouldFind])
+        for index, (ist, soll) in enumerate(zip(s.flat.notesAndRests, shouldFind)):
+            self.assertEqual(ist.quarterLength, common.opFrac(soll), f'{ist} has wrong quarterLength')
 
     def testAnacrusisPadding(self):
         from music21 import abcFormat
@@ -898,10 +811,8 @@ class Test(unittest.TestCase):
 
         for n, (majName, minName) in enumerate(zip(major, minor)):
             am = abcFormat.ABCMetadata('K:' + majName)
-            am.preParse()
             ks_major = am.getKeySignatureObject()
             am = abcFormat.ABCMetadata('K:' + minName)
-            am.preParse()
             ks_minor = am.getKeySignatureObject()
             self.assertEqual(n, ks_major.sharps)
             self.assertEqual(n, ks_minor.sharps)
