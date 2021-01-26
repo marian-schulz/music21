@@ -316,24 +316,11 @@ def parseTokens(mh, dst, p, useMeasures):
 
         elif isinstance(t, abcFormat.ABCNote):
             # add the attached chord symbol
-            if t.isRest:
-                n = note.Rest()
-            else:
-                n = note.Note(t.pitchName)
-                if n.pitch.accidental is not None:
-                    n.pitch.accidental.displayStatus = t.accidentalDisplayStatus
+            n = t.m21Object()
 
             # as ABCChord is subclass of ABCNote, handle first
             if isinstance(t, abcFormat.ABCChord) and t.subTokens:
-                # may have more than notes?
-                pitchNameList = []
-                accStatusList = []  # accidental display status list
-                for tSub in t.subTokens:
-                    # notes are contained as subTokens are already parsed
-                    if isinstance(tSub, abcFormat.ABCNote):
-                        pitchNameList.append(tSub.pitchName)
-                        accStatusList.append(tSub.accidentalDisplayStatus)
-                c = chord.Chord(pitchNameList)
+                c = t.m21Object()
                 c.duration.quarterLength = t.quarterLength
                 if t.activeTuplet:
                     thisTuplet = copy.deepcopy(t.activeTuplet)

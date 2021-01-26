@@ -135,8 +135,7 @@ class ABCToken(prebase.ProtoM21Object):
 
     The multi-pass procedure is conducted by an ABCHandler object.
     The ABCHandler.tokenize() method breaks the data stream into
-    ABCToken objects. The :meth:`~music21.abcFormat.ABCHandler.tokenProcess` method first
-    calls the :meth:`~music21.abcFormat.ABCToken.preParse` method on each token,
+    ABCToken objects. The :meth:`~music21.abcFormat.ABCHandler.tokenProcess` method
     then does contextual
     adjustments to all tokens, then calls :meth:`~music21.abcFormat.ABCToken.parse` on all tokens.
 
@@ -148,39 +147,6 @@ class ABCToken(prebase.ProtoM21Object):
 
     def _reprInternal(self):
         return repr(self.src)
-
-    @staticmethod
-    def stripComment(strSrc):
-        '''
-        removes ABC-style comments from a string:
-
-        >>> ao = abcFormat.ABCToken()
-        >>> ao.stripComment('asdf')
-        'asdf'
-        >>> ao.stripComment('asdf%234')
-        'asdf'
-        >>> ao.stripComment('asdf  %     234')
-        'asdf  '
-        >>> ao.stripComment('[ceg]% this chord appears 50% more often than other chords do')
-        '[ceg]'
-
-        This is a static method, so it can also be called on the class itself:
-
-        >>> abcFormat.ABCToken.stripComment('b1 % a b-flat actually')
-        'b1 '
-
-        Changed: v6.2 -- made a staticmethod
-        '''
-        if '%' in strSrc:
-            return strSrc.split('%')[0]
-        return strSrc
-
-    def preParse(self):
-        '''
-        Dummy method that is called before contextual adjustments.
-        Designed to be subclassed or overridden.
-        '''
-        pass
 
     def parse(self):
         '''
@@ -214,7 +180,7 @@ class ABCArticulation(ABCToken):
 
     @property
     def m21Name(self):
-        raise NotImplemented()
+        return NotImplemented
 
 
 class ABCExpressions(ABCToken):
@@ -226,7 +192,7 @@ class ABCExpressions(ABCToken):
         super().__init__(src)
 
     def m21Object(self) -> expressions.Expression:
-        return None
+        return NotImplemented
 
 
 class ABCMetadata(ABCToken):
@@ -304,7 +270,6 @@ class ABCMetadata(ABCToken):
         Returns True if the tag is "X", False otherwise.
 
         >>> x = abcFormat.ABCMetadata('X:5')
-        >>> x.preParse()
         >>> x.tag
         'X'
         >>> x.isReferenceNumber()
@@ -396,54 +361,44 @@ class ABCMetadata(ABCToken):
         return Tuple[List[<numerator: int>], <denominator: int>, <symbol: str>]
 
         >>> am = abcFormat.ABCMetadata('M:2/2')
-        >>> am.preParse()
         >>> am.isMeter()
         True
         >>> am.getTimeSignatureParameters()
         ([2], 2, 'normal')
 
         >>> am = abcFormat.ABCMetadata('M:C|')
-        >>> am.preParse()
         >>> am.getTimeSignatureParameters()
         ([2], 2, 'cut')
 
         >>> am = abcFormat.ABCMetadata('M:C')
-        >>> am.preParse()
         >>> am.getTimeSignatureParameters()
         ([4], 4, 'common')
 
         >>> am = abcFormat.ABCMetadata('M: none')
-        >>> am.preParse()
         >>> am.getTimeSignatureParameters() is None
         True
 
         >>> am = abcFormat.ABCMetadata('M: FREI4/4')
-        >>> am.preParse()
         >>> am.getTimeSignatureParameters()
         ([4], 4, 'normal')
 
         >>> am = abcFormat.ABCMetadata('M: 2+2+2/4')
-        >>> am.preParse()
         >>> am.getTimeSignatureParameters()
         ([2, 2, 2], 4, 'normal')
 
         >>> am = abcFormat.ABCMetadata('M: (3+2)/4')
-        >>> am.preParse()
         >>> am.getTimeSignatureParameters()
         ([3, 2], 4, 'normal')
 
         >>> am = abcFormat.ABCMetadata('M: 3+2')
-        >>> am.preParse()
         >>> am.getTimeSignatureParameters()
         ([3, 2], 1, 'normal')
 
         >>> am = abcFormat.ABCMetadata('M: /2')
-        >>> am.preParse()
         >>> am.getTimeSignatureParameters()
         ([1], 2, 'normal')
 
         >>> am = abcFormat.ABCMetadata('M: 1+2++3/4')
-        >>> am.preParse()
         >>> am.getTimeSignatureParameters()
         ([1, 2, 3], 4, 'normal')
         """
@@ -485,25 +440,21 @@ class ABCMetadata(ABCToken):
         object for this metadata tag, if isMeter is True, otherwise raise exception.
 
         >>> am = abcFormat.ABCMetadata('M:2/2')
-        >>> am.preParse()
         >>> ts = am.getTimeSignatureObject()
         >>> ts
         <music21.meter.TimeSignature 2/2>
 
         >>> am = abcFormat.ABCMetadata('M:C|')
-        >>> am.preParse()
         >>> ts = am.getTimeSignatureObject()
         >>> ts
         <music21.meter.TimeSignature 2/2>
 
         >>> am = abcFormat.ABCMetadata('M:1+2/2')
-        >>> am.preParse()
         >>> ts = am.getTimeSignatureObject()
         >>> ts
         <music21.meter.TimeSignature 1/2+2/2>
 
         >>> am = abcFormat.ABCMetadata('M:(2+2+2)/6')
-        >>> am.preParse()
         >>> ts = am.getTimeSignatureObject()
         >>> ts
         <music21.meter.TimeSignature 2/6+2/6+2/6>
@@ -540,97 +491,78 @@ class ABCMetadata(ABCToken):
         >>> from music21 import abcFormat
 
         >>> am = abcFormat.ABCMetadata('K:E exp ^c _a')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('E', None, ['C#', 'A-'])
 
         >>> am = abcFormat.ABCMetadata('K:^c _c')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         (None, None, ['C-'])
 
         >>> am = abcFormat.ABCMetadata('K:_c =c clef=alto')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         (None, None, ['Cn'])
 
         >>> am = abcFormat.ABCMetadata('K:')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         (None, None, [])
 
         >>> am = abcFormat.ABCMetadata('K: exp ^c ^f clef=alto')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         (None, None, ['C#', 'F#'])
 
         >>> am = abcFormat.ABCMetadata('K:Eb Lydian')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('E-', 'lydian', [])
 
         >>> am = abcFormat.ABCMetadata('K:C ^d')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('C', 'major', ['D#'])
 
         >>> am = abcFormat.ABCMetadata('K:APhry clef=alto')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('A', 'phrygian', [])
 
         >>> am = abcFormat.ABCMetadata('K:G Mixolydian')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('G', 'mixolydian', [])
 
         >>> am = abcFormat.ABCMetadata('K: Edor')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('E', 'dorian', [])
 
         >>> am = abcFormat.ABCMetadata('K: F')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('F', 'major', [])
 
         >>> am = abcFormat.ABCMetadata('K:G')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('G', 'major', [])
 
         >>> am = abcFormat.ABCMetadata('K:Gm')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('G', 'minor', [])
 
         >>> am = abcFormat.ABCMetadata('K:Hp')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('D', None, ['F#', 'C#'])
 
         >>> am = abcFormat.ABCMetadata('K:HP')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('C', None, [])
 
         >>> am = abcFormat.ABCMetadata('K:G ionian')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('G', 'ionian', [])
 
         >>> am = abcFormat.ABCMetadata('K:G aeol')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('G', 'aeolian', [])
 
         >>> am = abcFormat.ABCMetadata('K:Cm ^f _d')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('C', 'minor', ['F#', 'D-'])
 
         >>> am = abcFormat.ABCMetadata('K:G major =F')
-        >>> am.preParse()
         >>> am.getKeySignatureParameters()
         ('G', 'major', ['Fn'])
         '''
@@ -715,72 +647,59 @@ class ABCMetadata(ABCToken):
         Return a music21 :class:`~music21.key.KeySignature` or :class:`~music21.key.Key`
         object for this metadata tag.
         >>> am = abcFormat.ABCMetadata('K:G =F')
-        >>> am.preParse()
         >>> am.getKeySignatureObject()
         <music21.key.Key of G major>
 
         >>> am = abcFormat.ABCMetadata('K:G ^d')
-        >>> am.preParse()
         >>> ks = am.getKeySignatureObject()
         >>> ks
         <music21.key.KeySignature of pitches: [F#, D#]>
 
         >>> am = abcFormat.ABCMetadata('K:G')
-        >>> am.preParse()
         >>> ks = am.getKeySignatureObject()
         >>> ks
         <music21.key.Key of G major>
 
         >>> am = abcFormat.ABCMetadata('K:Gmin')
-        >>> am.preParse()
         >>> ks = am.getKeySignatureObject()
         >>> ks
         <music21.key.Key of g minor>
 
         >>> am = abcFormat.ABCMetadata('K:E exp ^c ^a')
-        >>> am.preParse()
         >>> ks = am.getKeySignatureObject()
         >>> ks
         <music21.key.KeySignature of pitches: [C#, A#]>
 
         >>> am = abcFormat.ABCMetadata('K:GM')
-        >>> am.preParse()
         >>> ks = am.getKeySignatureObject()
         >>> ks
         <music21.key.Key of g minor>
 
         >>> am = abcFormat.ABCMetadata('K:Hp')
-        >>> am.preParse()
         >>> am.getKeySignatureObject()
         <music21.key.KeySignature of pitches: [F#, C#]>
 
         >>> am = abcFormat.ABCMetadata('K:HP')
-        >>> am.preParse()
         >>> am.getKeySignatureObject()
         <music21.key.KeySignature of no sharps or flats>
 
         >>> am = abcFormat.ABCMetadata('K:C =c')
-        >>> am.preParse()
         >>> am.getKeySignatureObject()
         <music21.key.Key of C major>
 
         >>> am = abcFormat.ABCMetadata('K:C ^c =c')
-        >>> am.preParse()
         >>> am.getKeySignatureObject()
         <music21.key.Key of C major>
 
         >>> am = abcFormat.ABCMetadata('K:C ^c _c')
-        >>> am.preParse()
         >>> am.getKeySignatureObject()
         <music21.key.KeySignature of pitches: [C-]>
 
         >>> am = abcFormat.ABCMetadata('K:^c _c')
-        >>> am.preParse()
         >>> am.getKeySignatureObject()
         <music21.key.KeySignature of pitches: [C-]>
 
         >>> am = abcFormat.ABCMetadata('K:Db')
-        >>> am.preParse()
         >>> am.getKeySignatureObject()
         <music21.key.Key of D- major>
         '''
@@ -813,7 +732,7 @@ class ABCMetadata(ABCToken):
                     ks.alteredPitches = [f"{n}{a}" for n, a in newAltPitch.items()]
 
         elif accidentals:
-            # Create a Keysignature from accidentials
+            # Create a Keysignature from accidentals
             ks = key.KeySignature()
             ks.alteredPitches = accidentals
         else:
@@ -832,22 +751,18 @@ class ABCMetadata(ABCToken):
         Returns a two-element tuple of clefObj and transposition in semitones
 
         >>> am = abcFormat.ABCMetadata('K:Eb Lydian bass')
-        >>> am.preParse()
         >>> am.getClefObject()
         (<music21.clef.BassClef>, -24)
 
         >>> am = abcFormat.ABCMetadata('K:Eb clef=bass')
-        >>> am.preParse()
         >>> am.getClefObject()
         (<music21.clef.BassClef>, -24)
 
         >>> am = abcFormat.ABCMetadata('V: clef=alto')
-        >>> am.preParse()
         >>> am.getClefObject()
         (<music21.clef.AltoClef>, 0)
 
         >>> am = abcFormat.ABCMetadata('V: clef=treble')
-        >>> am.preParse()
         >>> am.getClefObject()
         (<music21.clef.TrebleClef>, 0)
 
@@ -889,27 +804,22 @@ class ABCMetadata(ABCToken):
         Extract any tempo parameters stored in a tempo metadata token.
 
         >>> am = abcFormat.ABCMetadata('Q: "Allegro" 1/4=120')
-        >>> am.preParse()
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark Allegro Quarter=120.0>
 
         >>> am = abcFormat.ABCMetadata('Q: 3/8=50 "Slowly"')
-        >>> am.preParse()
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark Slowly Dotted Quarter=50.0>
 
         >>> am = abcFormat.ABCMetadata('Q:1/2=120')
-        >>> am.preParse()
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark animato Half=120.0>
 
         >>> am = abcFormat.ABCMetadata('Q:1/4 3/8 1/4 3/8=40')
-        >>> am.preParse()
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark grave Whole tied to Quarter (5 total QL)=40.0>
 
         >>> am = abcFormat.ABCMetadata('Q:90')
-        >>> am.preParse()
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark maestoso Quarter=90.0>
 
@@ -1014,7 +924,6 @@ class ABCMetadata(ABCToken):
                 return 0.5  # otherwise it is an eighth note
         else:
             return None
-
 
 
 class ABCBar(ABCToken):
@@ -1553,6 +1462,10 @@ class ABCSegno(ABCExpressionMarker):
     '''
 
     def m21Object(self) -> 'music21.repeat.Segno':
+        """
+        return:
+            music21 object corresponding to the token
+        """
         from music21 import repeat
         return repeat.Segno()
 
@@ -1564,30 +1477,24 @@ class ABCBrokenRhythmMarker(ABCToken):
 
     def __init__(self, src: str):
         super().__init__(src)
-        self.left : ABCGeneralNote = None
-        self.right: ABCGeneralNote = None
+        self.left, self.right = {'>': (1.5, 0.5), '>>': (1.75, 0.25),
+                                 '>>>': (1.875, 0.125), '<': (0.5, 1.5),
+                                 '<<': (0.25, 1.75), '<<<': (0.125, 1.875)
+                                 }.get(self.src, (1, 1))
 
-    def left(self, note: ABCGeneralNote):
-        '''
-        Set note  on the left side of the BrokenRythm
-        '''
-        self.left = note
 
-    def right(self, note: ABCGeneralNote):
+    def set_notes(self, left: 'ABCGeneralNote', right: 'ABCGeneralNote'):
         '''
-        Set a Note as note on the right side of the BrokenRythm
+        Set note the length modifier of the the BrokenRythm to the left
+        and right node
+        arguments:
+            left:
+                Note token to the left of the BrokenRythmMarker
+            right:
+                Note token to the right of the BrokenRythmMarker
         '''
-        self.right = note
-
-    def parse(self):
-        if self.left and self.right:
-            symbol, direction = self.brokenRhythmMarker
-            left, rigth = {'>': (1.5, 0.5), '>>': (1.75, 0.25), '>>>': (1.875, 0.125),
-                           '<': (0.5, 1.5), '<<': (0.25, 1.75), '<<<': (0.125, 1.875)
-                           }.get(self.src, (1, 1))
-
-            self.left.quarterLength *= left
-            self.right.quarterLength *= right
+        left.brokenRyhtmModifier = self.left
+        right.brokenRyhtmModifier = self.right
 
 
 class ABCChordSymbol(ABCToken):
@@ -1615,62 +1522,33 @@ class ABCGeneralNote(ABCToken):
     updated when parse() is called.
     '''
 
-    def __init__(self, src='', carriedAccidental=None,
-                 defaultQuarterLength: Optional[float]=1.0,
-                 keySignature: Optional[key.KeySignature]=None):
+    def __init__(self, src, length: Optional[str]=None,
+                 defaultQuarterLength: float=0.5,
+                 activeKeySignature: Optional['musci21.key.KeySiganture'] = None):
         """
-
-        >>> an.getQuarterLength('A/')
-        0.5
-
-        >>> an.getQuarterLength('A//')
-        0.125
-        >>> an.getQuarterLength('A///')
-        0.0625
-
-        >>> an = abcFormat.ABCNote()
-        >>> an.activeDefaultQuarterLength = 0.5
-        >>> an.brokenRhythmMarker = ('>', 'left')
-        >>> an.getQuarterLength('A')
-        0.75
-        >>> an.brokenRhythmMarker = ('>', 'right')
-        >>> an.getQuarterLength('A')
-        0.25
-
-        >>> an.brokenRhythmMarker = ('<<', 'left')
-        >>> an.getQuarterLength('A')
-        0.125
-        >>> an.brokenRhythmMarker = ('<<', 'right')
-        >>> an.getQuarterLength('A')
-        0.875
-
-        >>> an.brokenRhythmMarker = ('<<<', 'left')
-        >>> an.getQuarterLength('A')
-        0.0625
-        >>> an.brokenRhythmMarker = ('<<<', 'right')
-        >>> an.getQuarterLength('A')
-        0.9375
-
-        >>> an.getQuarterLength('A', forceDefaultQuarterLength=1)
-        1.875
+         argument:
+             src:
+                 token string of an abc note
+            length:
+                 length string of the abc note
+             defaultQuarterLength:
+                 default length of an note an note with qan quarter note is 1.0
+                 (default value is according ABC standart 0.5 = 1/8)
+             keySignature:
+                the active key signature
         """
         super().__init__(src)
+
+        # Note length modifier from abc note string
+        self.lengthModifier: float = ABCGeneralNote._parse_length(length)
+
+        # A note length modifier provided by an BrokenRythmMarker
+        self.brokenRyhtmModifier: float = 1.0
 
         # context attributes
         self.inBar = None
         self.inBeam = None
         self.inGrace = None
-
-        # the quarter Length of this note
-        self.quarterLength: float = defaultQuarterLength
-
-        # provide default duration from handler; may change during piece
-        # @TODO: Remove this, the Chord doesn't need it but his notes
-        self.activeDefaultQuarterLength = defaultQuarterLength
-
-        # store key signature for pitch processing; this is an m21 object
-        # @TODO: Remove this, the Chord doesn't need it but his notes
-        self.activeKeySignature = keySignature
 
         # store a tuplet if active
         self.activeTuplet = None
@@ -1685,119 +1563,103 @@ class ABCGeneralNote(ABCToken):
         # @TODO: Remove this, the Chord doesn't need it but his notes
         self.articulations = []
 
+        # provide default duration from handler; may change during piece
+        # @TODO: Remove this, the Chord doesn't need it but his notes
+        self.activeDefaultQuarterLength: float = defaultQuarterLength
+
+        # store key signature for pitch processing; this is an m21 object
+        # @TODO: Remove this, the Chord doesn't need it but his notes
+        self.activeKeySignature = activeKeySignature
+
         # set to True if a modification of key signature
         # set to False if an altered tone part of a Key
         # @TODO: Remove this, the Chord doesn't need it but his notes
-        self.accidentalDisplayStatus = None
+        # self.accidentalDisplayStatus = None
 
-        # determined during preParse() based on if pitch chars are present
-        self.isRest = None
-
-        numStr, _ = common.getNumFromStr(src, '0123456789/')
-        # Base length
-        if numStr == '/':
-            self.quarterLength *= 0.5
-        elif numStr == '//':
-            self.quarterLength *= 0.25
-        elif numStr == '///':
-            self.quarterLength *= 0.125
-        else:
-            try:
-                if numStr.startswith('/'):
-                    n, d = 1, int(numStr.lstrip('/'))
-                # uncommon usage: 3/ short for 3/2
-                elif numStr.endswith('/'):
-                    n, d = int(numStr.strip().rstrip('/')), 2
-                elif '/' in numStr:
-                    n, d = numStr.split('/')
-                    n, d = int(n.strip()), int(d.strip())
-                else:
-                    n, d = int(numStr), 1
-                self.quarterLength *= n / d
-            except ValueError:
-                # this is usually an error, provide 1.0 as default
-                environLocal.printDebug(['incorrectly encoded / unparsable duration:', numStr])
-                pass
-
-    @property
-    def quarterLength(self):
+    @classmethod
+    def _parse_length(self, src: str) -> float:
         """
-        >>> an = abcFormat.ABCNote('=c/2', defaultQuarterLength=0.5).quarterLength
-        0.25
-
-        >>> abcFormat.ABCNote('e2', defaultQuarterLength=0.5).quarterLength
+        ABCGeneralNote._parse_length('1')
         1.0
-
-        >>> abcFormat.ABCNote('e2').quarterLength
-        2.0
-
-        >>> abcFormat.ABCNote('A3/2').quarterLength
+        ABCGeneralNote._parse_length('2/3')
+        1.5
+        ABCGeneralNote._parse_length('/')
+        0.5
+        ABCGeneralNote._parse_length('//')
+        0.25
+        ABCGeneralNote._parse_length('/2')
+        0.5
+        ABCGeneralNote._parse_length('3/')
         1.5
         """
+        # numStr, _ = common.getNumFromStr(src, '0123456789/')
+        # Base length
+        if src is None:
+            return 1.0
+        if src == '/':
+            return 0.5
+        elif src == '//':
+            return 0.25
+        elif src == '///':
+            return 0.125
+        else:
+            try:
+                if src.startswith('/'):
+                    n, d = 1, int(src.lstrip('/'))
+                # uncommon usage: 3/ short for 3/2
+                elif src.endswith('/'):
+                    n, d = int(src.strip().rstrip('/')), 2
+                elif '/' in src:
+                    n, d = src.split('/')
+                    n, d = int(n.strip()), int(d.strip())
+                else:
+                    n, d = int(src), 1
+                return n / d
+            except ValueError:
+                # this is usually an error, provide 1.0 as default
+                environLocal.printDebug(['incorrectly encoded / unparsable duration:', src])
 
+        return 1.0
+
+    def quarterLength(self, defaultQuarterLength: Optional[float]=None):
+        """
+        >>> abcFormat.ABCNote('=c/2', defaultQuarterLength=0.5).quarterLength()
+        0.25
+
+        >>> abcFormat.ABCNote('e2', defaultQuarterLength=0.5).quarterLength()
+        1.0
+
+        >>> abcFormat.ABCNote('e2').quarterLength()
+        2.0
+
+        >>> abcFormat.ABCNote('A3/2').quarterLength()
+        1.5
+
+        >>> abcFormat.ABCNote('A//').quarterLength()
+        0.25
+
+        >>> abcFormat.ABCNote('A///').quarterLength()
+        0.125
+        """
         # <lengthModifier>: modifier providet by the abc length syntax
         # <brokenRyhtm>: a BrokenRythm modifier
         # <activeDefaultQuarterLength>: default length providet by abc default_note_length (L:)
-        return self.lengthModifier * self.brokenRyhtm * self.activeDefaultQuarterLength
-
-    def getQuarterLength(self, modifier: str, forceDefaultQuarterLength=None) -> float:
-        '''
-        Called with parse(), after context processing, to calculate duration
-
-        >>> an = abcFormat.ABCNote()
-        >>> an.activeDefaultQuarterLength = 0.5
-        >>> an.getQuarterLength('=c/2')
-        0.25
-
-        >>> an.getQuarterLength('e2')
-        1.0
-
-        >>> an.getQuarterLength('G')
-        0.5
-
-        >>> an.getQuarterLength('A3/2')
-        0.75
-        >>> an.getQuarterLength('A/')
-        0.25
-
-        >>> an.getQuarterLength('A//')
-        0.125
-        >>> an.getQuarterLength('A///')
-        0.0625
-
-        >>> an = abcFormat.ABCNote()
-        >>> an.activeDefaultQuarterLength = 0.5
-        >>> an.brokenRhythmMarker = ('>', 'left')
-        >>> an.getQuarterLength('A')
-        0.75
-        >>> an.brokenRhythmMarker = ('>', 'right')
-        >>> an.getQuarterLength('A')
-        0.25
-
-        >>> an.brokenRhythmMarker = ('<<', 'left')
-        >>> an.getQuarterLength('A')
-        0.125
-        >>> an.brokenRhythmMarker = ('<<', 'right')
-        >>> an.getQuarterLength('A')
-        0.875
-
-        >>> an.brokenRhythmMarker = ('<<<', 'left')
-        >>> an.getQuarterLength('A')
-        0.0625
-        >>> an.brokenRhythmMarker = ('<<<', 'right')
-        >>> an.getQuarterLength('A')
-        0.9375
-
-        >>> an.getQuarterLength('A', forceDefaultQuarterLength=1)
-        1.875
-        '''
-
-
-        if forceDefaultQuarterLength is None:
+        if defaultQuarterLength is None:
             defaultQuarterLength = self.activeDefaultQuarterLength
-        else:
-            defaultQuarterLength = forceDefaultQuarterLength
+        return self.lengthModifier * self.brokenRyhtmModifier * defaultQuarterLength
 
+    def m21Object(self):
+        """
+        return:
+            music21 object corresponding to the token
+        """
+        raise NotImplementedError()
+
+    def apply_accents(self, c):
+        pass
+
+    def apply_articulations(self, c):
+        pass
 
 class ABCNote(ABCGeneralNote):
     '''
@@ -1815,66 +1677,97 @@ class ABCNote(ABCGeneralNote):
     updated when parse() is called.
     '''
 
-    def __init__(self, src='', carriedAccidental=None):
-        super().__init__(src)
+    def __init__(self, src:str, carriedAccidental: Optional[str]=None,
+                 defaultQuarterLength: Optional[float]=0.5,
+                 activeKeySignature: Optional['musci21.key.KeySignature']=None):
+        """
+        argument:
+            src:
+                Token string of an abc note
+            carriedaccidental:
+                m21 formatted accidental carried from a note of the same bar
+            defaultQuarterLength:
+                default length of an note an note with qan quarter note is 1.0
+                (default value is according ABC standart 0.5 = 1/8)
+        """
+        p, a, o, l = ABCNote._parse_note(src)
+        super().__init__(src,
+                         length=l,
+                         defaultQuarterLength=defaultQuarterLength,
+                         activeKeySignature=activeKeySignature)
 
-        # store the ABC accidental string propagated in the measure that
-        # must be applied to this note. Note must not be set if the
-        # note already has an explicit accidental attached. (The explicit
-        # accidental is now the one that will be carried forward.)
-        self.carriedAccidental = carriedAccidental
+        self.pitch_name: str = p        # m21 formated pitch name
+        self.accidental: str = a       # m21 formated accidental
+        self.octave: int = o            # octave number
 
-        # context attributes
-        self.inBar = None
-        self.inBeam = None
-        self.inGrace = None
-        # provide default duration from handler; may change during piece
-        self.activeDefaultQuarterLength = None
-        # store if a broken symbol applies; pair of symbol, position (left, right)
-        self.brokenRhythmMarker = None
+        # accidental propagated from a previous note in the same measure
+        self.carriedAccidental: str = carriedAccidental
 
-        # store key signature for pitch processing; this is an m21 object
-        self.activeKeySignature = None
+        # Note is a rest
+        self.isRest: boolean = self.pitch_name == 'Z'
 
-        # store a tuplet if active
-        self.activeTuplet = None
 
-        # store a spanner if active
-        self.applicableSpanners = []
+    @classmethod
+    def _parse_note(cls, src: str) -> Tuple[str, str, int, str]:
+        """
+        Parse the an abc note string
 
-        # store a tie if active
-        self.tie = None
+        argument:
+            src:
+                Token string of an abc note
+        return:
+            pitch:
+                musci21 formated pitch of the note
+            accidental:
+                music21 formated accidental of the note
+            octave:
+                The octave of the note
+            lengthStr:
+                The abc length of the note
 
-        # store articulations if active
-        self.articulations = []
+        >>> ABCNote._parse_note('C')
+        ('', 'C', 5, '')
 
-        # set to True if a modification of key signature
-        # set to False if an altered tone part of a Key
-        self.accidentalDisplayStatus = None
-        # determined during preParse() based on if pitch chars are present
-        self.isRest = None
-        # pitch/ duration attributes for m21 conversion
-        # set with parse() based on all other contextual
-        self.pitchName = None
-        self.quarterLength: float = None
-        self.pitchClass: str = None
-        self.accidental: str = None
-        self.pitchClass: str = None
-        self.abc_pitch_name: str = None
+        >>> ABCNote._parse_note('^c')
+        ('C', '#', 4, '')
 
-    def preParse(self):
-        # Case sensitive Pitchname with octave modifier (c'' or D,,)
-        self.pitchWithOctave = RE_PICH_AND_OCTAVE.findall(self.src)[0]
-        # Cases sensitive pitch name
-        self.abc_pitch_name = self.pitchWithOctave[0]
-        self.pitchClass = self.abc_pitch_name.upper()
-        self.isRest = self.pitchClass == 'Z'
-        self.accidental = RE_ACCIDENTALS.findall(self.src)[0]
+        >>> ABCNote._parse_note('_c,,')
+        ('C', '-', 6, '')
 
-    def m21Object(
-        self,
-        forceKeySignature=None
-    ) -> Tuple[Optional[str], Union[bool, None]]:
+        >>> ABCNote._parse_note("_g'/4")
+        ('G', '-', 6, '/4')
+
+        >>> ABCNote._parse_note("^_g'6/4")
+        ('F', '-', 6, '6/3')
+        """
+        RE_MATCH_ABC_NOTE = re.compile(r'([\^_=])*([A-Ga-gz])([0-9/\',])*').match
+        ACCIDENTAL_MAP = {'^': '#', '^^': '##', '=': 'n', '_': '-', '__': '--'}
+
+        match = RE_MATCH_ABC_NOTE(src)
+        if match:
+            g = match.groups()
+            accidental = match.group(1)
+            if accidental:
+                accidental = ACCIDENTAL_MAP.get(accidental[-2:],
+                                                ACCIDENTAL_MAP.get(accidental[:-1]))
+            pitch = match.group(2)
+            last = match.group(3)
+            if last:
+                length, o = common.getNumFromStr(last, '0123456789/')
+            else:
+                length, o = None, None
+
+            octave = 5 if pitch.islower() else 4
+            if o:
+                octave -= o.count(',')
+                octave += o.count("'")
+        else:
+            raise ABCTokenException(f'Token string "{src}" is not an abc note.')
+
+        return (pitch.upper(), accidental, octave, length)
+
+
+    def m21Object(self) -> 'music21.note.Note':
         '''
         Given a note or rest string without a chord symbol,
         return a music21 pitch string or None (if a rest),
@@ -1883,179 +1776,206 @@ class ABCNote(ABCGeneralNote):
         accidental display status, are adjusted if a key is
         declared in the Note.
 
-        >>> an = abcFormat.ABCNote()
-        >>> an.getPitchName('e2')
+        >>> an = abcFormat.ABCNote('e2')
+        >>> n = an.m21Object()
+        >>> n, n.pitch.accidental.displayStatus
         ('E5', None)
-        >>> an.getPitchName('C')
-        ('C4', None)
-        >>> an.getPitchName('B,,')
-        ('B2', None)
-        >>> an.getPitchName('C,')
-        ('C3', None)
-        >>> an.getPitchName('c')
+
+        >>> an = abcFormat.ABCNote('C')
+        >>> n = an.m21Object()
+        >>> n, n.pitch.accidental.displayStatus
+        ('E5', None)
+
+        >>> an = abcFormat.ABCNote('B,,')
+        >>> n = an.m21Object()
+        >>> n, n.pitch.accidental.displayStatus
+        ('E5', None)
+
+        >>> an = abcFormat.ABCNote('C,')
+        >>> n = an.m21Object()
+        >>> n, n.pitch.accidental.displayStatus
+        ('E5', None)
+
+        >>> an = abcFormat.ABCNote('c')
+        >>> n = an.m21Object()
+        >>> n, n.pitch.accidental.displayStatus
         ('C5', None)
-        >>> an.getPitchName("c'")
-        ('C6', None)
-        >>> an.getPitchName("c''")
-        ('C7', None)
-        >>> an.getPitchName("^g")
-        ('G#5', True)
-        >>> an.getPitchName("_g''")
-        ('G-7', True)
-        >>> an.getPitchName('=c')
+
+        >>> an = abcFormat.ABCNote("c'")
+        >>> n = an.m21Object()
+        >>> n, n.pitch.accidental.displayStatus
+        ('C5', None)
+
+        >>> an = abcFormat.ABCNote('=c')
+        >>> n = an.m21Object()
+        >>> n, n.pitch.accidental.displayStatus
         ('Cn5', True)
 
-        If pitch is a rest (z) then the Pitch name is None:
-
-        >>> an.getPitchName('z4')
-        (None, None)
-
-        Grace note:
-
-        >>> an.getPitchName('{c}')
-        ('C5', None)
-
-
-        Given an active KeySignature object, the pitch name might
-        change:
-
-        >>> an.activeKeySignature = key.KeySignature(3)
-        >>> an.getPitchName('c')
-        ('C#5', False)
-
-
-        Illegal pitch names raise an ABCHandlerException
-
-        >>> an.getPitchName('x')
-        Traceback (most recent call last):
-        music21.abcFormat.ABCHandlerException: cannot find any pitch information in: 'x'
+        >>> an = abcFormat.ABCNote("_c'")
+        >>> n = an.m21Object()
+        >>> n, n.pitch.accidental.displayStatus
+        ('C-4', True)
         '''
 
-        if self.pitch_name == 'z':
-            return (None, None)  # designates a rest
+        if self.isRest:
+            return note.Rest()
 
         # Erstelle ein mapping für pitches die entweder in der signature oder in carry vorhanden sind
-        # Übernehme das Accidential für diese pitches aus carry, wenn nicht vorhanden aus der signature
-        active_accidentials = { p: self.carriedAccidental.get(p, signature[p])
-                                for p in "ABCDEFG" if p in signature or p in self.carriedAccidental}
-
-        if self.pitch_name in active_accidentials:
-            if not self.accidential:
-                 # the abc pitch has no accidential but there is an active accidential
-                 accidential, display = active_accidentials[self.pitch_name], False
-            elif self.accidential == active_accidentials[self.pitch_name]:
-                # the abc pitch has the same accidential as in active accidentials
-                accidential, display = self.accidential, False
-            else:
-                # the abc pitch has an accidential but it is not the same as in the active accidentials
-                accidential, display = self.accidential, True
-        elif self.accidential:
-            # the abc pitch has an accidential but not a an active accidential
-            accidential, display = self.accidential, True
+        # Übernehme das accidental für diese pitches aus carry, wenn nicht vorhanden aus der signature
+        #signature = p.step : p.pitch for p in active_keySignature.alteredPitches }
+        if self.carriedAccidental:
+            active_accidental = self.carriedAccidental
+        elif self.activeKeySignature:
+            active_accidental = next( p.accidental.name for p in self.activeKeySignature.alteredPitches
+                                      if p.step == self.pitch_name)
         else:
-            # the abc pitch has no accidential and no active accidential
-            accidential, display = '', None
+            active_accidental = None
 
+        if active_accidental:
+            if not self.accidental:
+                 # the abc pitch has no accidental but there is an active accidental
+                 accidental, display = active_accidental, False
+            elif self.accidental == active_accidental:
+                # the abc pitch has the same accidental as in active accidentals
+                accidental, display = self.accidental, False
+            else:
+                # the abc pitch has an accidental but it is not the same as in the active accidentals
+                accidental, display = self.accidental, True
+        elif self.accidental:
+            # the abc pitch has an accidental but not a an active accidental
+            accidental, display = self.accidental, True
+        else:
+            # the abc pitch has no accidental and no active accidental
+            accidental, display = '', None
 
-        from music21 import note
+        pitchname = f'{self.pitch_name}{self.octave}{accidental}'
 
-        n = note.Note(pitchName=f'{self.pitch_name}{self.accidental}')
-        n.quarterLength = self.quarterLength
-        n.octave = self.ocatve
-        if accidential:
+        from music21.note import Note
+
+        try:
+            n = Note(pitchname)
+        except:
+            raise ABCTokenException(f'Pitchname {pitchname} is not valid m21 syntax for a Note')
+
+        if n.pitch.accidental is not None:
             n.pitch.accidental.displayStatus = display
+
+        n.duration.quarterLength = self.quarterLength()
+        # Apply accents to music21 note object
+        self.apply_accents(n)
+        # Apply articulations to musci21 note object
+        self.apply_articulations(n)
 
         return n
 
-    def parse(
-        self,
-        forceDefaultQuarterLength=None,
-        forceKeySignature=None
-    ) -> None:
-        # environLocal.printDebug(['parse', self.src])
 
-        try:
-            pn, accDisp = self.getPitchName(self.src,
-                                            forceKeySignature=forceKeySignature)
-        except ABCHandlerException:
-            environLocal.warn(['Could not get pitch information from note: ',
-                               f'{self.src}, assuming C'])
-            pn = 'C'
-            accDisp = False
-
-        self.pitchName, self.accidentalDisplayStatus = pn, accDisp
-
-        if self.pitchName is None:
-            self.isRest = True
-        else:
-            self.isRest = False
-
-        self.quarterLength = self.getQuarterLength(self.src,
-                                                   forceDefaultQuarterLength=forceDefaultQuarterLength)
-
-        # environLocal.printDebug(['ABCNote:', 'pitch name:', self.pitchName,
-        #                            'ql:', self.quarterLength])
-
-
-class ABCChord(ABCNote):
+class ABCChord(ABCGeneralNote):
     '''
     A representation of an ABC Chord, which contains within its delimiters individual notes.
 
     A subclass of ABCNote.
     '''
 
-    def __init__(self, src):
-        super().__init__(src)
-        # store a list of component objects
-        self.subTokens = []
+    def __init__(self, src:str, parent_handler: Optional['ABCHandler']=None, defaultQuarterLength: float=0.5):
+        """
+        argument:
+            src:
+                Token string of an abc note
+            parent_handler:
+                ABC Handler of the Chord
+            carriedaccidental:
+                m21 formatted accidental carried from a note of the same bar
+            defaultQuarterLength:
+                default length of an note an note with qan quarter note is 1.0
+                (default value is according ABC standart 0.5 = 1/8)
+        """
+        intern, length = src.split(']', 1)
+        super().__init__(src, length, defaultQuarterLength)
+        self.innerStr = intern[1:]
+
+        self._first_note: Optional[ABCNote] = None
+        if parent_handler:
+            self.chordHandler = ABCHandler(
+                abcVersion=parent_handler.abcVersion,
+                user_defined_token=parent_handler.user_defined_token
+            )
+        else:
+            self.chordHandler = ABCHandler()
+
         pos = self.src.index(']')
-        # Length modifier string behind the brackets
-        self.lengthModifierStr = self.src[pos + 1:]
-        # String between the chord brackets
-        self.innerStr = self.src[1:pos]
-        self.ChordHandler = ABCHandler()
 
-    def preParse(self):
-        # only tokenizing; not calling process() as these objects
-        self.ChordHandler.tokenize(self.innerStr)
 
-    def parse(self, forceKeySignature=None, forceDefaultQuarterLength=None):
+    @property
+    def subTokens(self):
+        return self.chordHandler.tokens
 
-        # environLocal.printDebug(['ABCChord:', nonChordSymStr, 'tokenStr', tokenStr, '
-        # outerLengthModifierStr', outerLengthModifierStr])
+    def isEmpty(self) -> bool:
+        return self._first_note is None
 
-        outer_lengthModifier = self.getQuarterLength(self.lengthModifierStr, forceDefaultQuarterLength=1.0)
+    def tokenize(self):
+        self.chordHandler.tokenize(self.innerStr)
+        tokens = [t for t in self.chordHandler.tokens if
+                  isinstance(t, (ABCAccent, ABCExpressions)) or isinstance(t, ABCNote) and not t.isRest]
 
-        if forceKeySignature is not None:
-            activeKeySignature = forceKeySignature
-        else:  # may be None
-            activeKeySignature = self.activeKeySignature
+        self._first_note = next(t for t in tokens if isinstance(t, ABCNote))
+        self.chordHandler.tokens = tokens
 
-        inner_quarterLength = 0
-        # tokens contained here are each ABCNote instances
-        for t in self.ChordHandler.tokens:
-            # environLocal.printDebug(['ABCChord: subTokens', t])
-            # parse any tokens individually, supply local data as necessary
+    def quarterLength(self, defaultQuarterLength: Optional[float]=None):
+        """
+        >>> c = abcFormat.ABCChord('[abc]', defaultQuarterLength=1.0)
+        >>> c.tokenize()
+        >>> c.quarterLength()
+        1.0
+
+        >>> c = abcFormat.ABCChord('[abc]/2', defaultQuarterLength=1.0)
+        >>> c.tokenize()
+        >>> c.quarterLength()
+        0.5
+
+        >>> c = abcFormat.ABCChord('[e2fg]')
+        >>> c.tokenize()
+        >>> c.quarterLength()
+        1.0
+
+        >>> c = abcFormat.ABCChord('[ADF]3/2')
+        >>> c.tokenize()
+        >>> c.quarterLength()
+        0.75
+
+        >>> c = abcFormat.ABCChord('[ADF]//')
+        >>> c.tokenize()
+        >>> c.quarterLength()
+        0.125
+
+        >>> c = abcFormat.ABCChord('[A]///', defaultQuarterLength=1.0)
+        >>> c.tokenize()
+        >>> c.quarterLength()
+        0.125
+        """
+        # <lengthModifier>: modifier providet by the abc length syntax
+        # <brokenRyhtm>: a BrokenRythm modifier
+        # <_first_note.quarterLength>: the length of the first note
+        if self.isEmpty():
+            return 0
+        if defaultQuarterLength is None:
+            defaultQuarterLength = self.activeDefaultQuarterLength
+        return self.lengthModifier * self.brokenRyhtmModifier * self._first_note.quarterLength(defaultQuarterLength)
+
+
+    def m21Object(self) -> 'music21.chord.Chort':
+        notes = []
+        for n in self.tokens:
             if isinstance(t, ABCNote):
-                t.parse(
-                    forceDefaultQuarterLength=self.activeDefaultQuarterLength,
-                    forceKeySignature=activeKeySignature)
+                n.activeKeySignature = self.activeKeySignature
+                n.defaultQuarterLength = self.defaultQuarterLength
+                notes.append(n.m21Object())
 
-                if t.isRest:
-                    continue
-
-                # get the quarter length from the sub-tokens
-                # All the notes within a chord should normally have the same length,
-                # but if not, the chord duration is that of the first note.
-                if not inner_quarterLength:
-                    inner_quarterLength = t.quarterLength
-
-                self.subTokens.append(t)
-
-        # When both inside and outside the chord length modifiers are used,
-        # they should be multiplied. Example: [C2E2G2]3 has the same meaning as [CEG]6.
-        self.quarterLength = outer_lengthModifier * inner_quarterLength
-
+        from music21.chord import Chord
+        c = Chord(notes)
+        c.duration.quarterLength = self.quarterLength()
+        self.apply_accents(c)
+        self.apply_articulations(c)
+        return c
 
 # ------------------------------------------------------------------------------
 BARLINES = r"|".join([r':\|[12]?', r'[\|][\|\]:12]?', r'[\[][\|12]', r'[:][\|:]?'])
@@ -2070,7 +1990,7 @@ TOKEN_SPEC = {
     'TUPLET_SIMPLE': (r'\([2-9]', ABCTuplet),
     'USER_DEF_FIELD': (r'[U]:[^|].*', None),
     'FIELD': (r'[A-Zmsrsw]:[^|].*(\n[+]:[^|].*)*', ABCMetadata),
-    'CHORD': (r'[\[][^\]]*[\]][0-9]*[/]*[0-9]*', ABCChord),
+    'CHORD': (r'[\[][^\]]*[\]][0-9]*[/]*[0-9]*', None),
     # 'CHORD_START': (r'\[', None),
     # 'CHORD_END': (r'\][0-9]*[/]*[1-9]*', None),
     'TIE': (r'-', ABCTie),
@@ -2098,11 +2018,13 @@ TOKEN_SPEC = {
     'TENUTO': (r'M', ABCTenuto),
     'STRACCENT': (r'k', ABCStraccent),
     'USER_DEFINED_TOKEN': (r'[H-Wh-w~]', None),
-    'UNKNOWN_DECORATION': (r'![^!]+!', None),
-    'WHITESPACE': (r'[ ]+', None),
+    #'UNKNOWN_DECORATION': (r'![^!]+!', None),
+    #'WHITESPACE': (r'[ ]+', None),
 }
 
-TOKEN_RE = re.compile(r'|'.join(r'(?P<%s>%s)' % (k, v[0].replace('[ALL]','[^%]*[^%\n ]')) for k, v in TOKEN_SPEC.items()), re.MULTILINE)
+TOKEN_RE = re.compile(r'|'.join(r'(?P<%s>%s)' % (rule, v[0])
+                                for rule, v in TOKEN_SPEC.items()),
+                      re.MULTILINE)
 
 class ABCHandler:
     '''
@@ -2119,20 +2041,18 @@ class ABCHandler:
     New in v6.2 -- lineBreaksDefinePhrases -- does not yet do anything
     '''
 
-    def __init__(self, abcVersion=None, lineBreaksDefinePhrases=False):
+    def __init__(self, abcVersion=None, lineBreaksDefinePhrases=False, user_defined_token=None):
 
         # set explitcit ABCVersion, ignore version string in file
         self.abcVersion = abcVersion
         self.abcDirectives = {}
+        self.user_defined_token = {} if user_defined_token is None else user_defined_token
         self.tokens = []
         self.activeParens = []
         self.activeSpanners = []
         self.lineBreaksDefinePhrases = lineBreaksDefinePhrases
-        self.pos = -1
-        self.skipAhead = 0
         self.strSrc = ''
-        self.srcLen = len(self.strSrc)  # just documenting this.
-        self.currentCollectStr = ''
+        self.srcLen = len(self.strSrc)  # just documenting this.'
 
     @staticmethod
     def barlineTokenFilter(token: str) -> List[ABCBar]:
@@ -2169,7 +2089,7 @@ class ABCHandler:
     # --------------------------------------------------------------------------
     # token processing
 
-    def getUserdefinedToken(self, src: str, user_definition: Dict[str, str]) -> str:
+    def getUserdefinedToken(self, src: str) -> str:
         # get the token rule and the abc expression in the user_definition.
         # if the symbol is not defined in the user definitions
         # return the default token.
@@ -2186,7 +2106,7 @@ class ABCHandler:
             'v': 'DOWNBOW'
         }
         try:
-            return user_definition[src]
+            return self.user_defined_token[src]
         except KeyError:
             return DEFAULTS[src]
 
@@ -2249,7 +2169,7 @@ class ABCHandler:
                 abcPatch = 0
             self.abcVersion =  (abcMajor, abcMinor, abcPatch)
 
-    def tokenize(self, strSrc: str) -> None:
+    def tokenize(self, strSrc: str, user_defintions: Optional[Dict]=None, token_regex=TOKEN_RE) -> None:
         """
         >>> abch = abcFormat.ABCHandler()
         >>> abch.tokens
@@ -2298,12 +2218,15 @@ class ABCHandler:
         >>> abch.tokens
         [<music21.abcFormat.ABCMetadata 'C: Tom Waits'>]
         """
-        self.abcVersion = self.parseABCVersion(strSrc)
-        # self.strSrc = strSrc
+        if self.abcVersion is None:
+            self.abcVersion = self.parseABCVersion(strSrc)
+
+        self.strSrc = strSrc
         token_list = []
 
         # Dictonary for predefined symbols
-        user_defintions = {}
+        if user_defintions is None:
+            user_defintions = {}
 
         for m in TOKEN_RE.finditer(strSrc):
             rule = m.lastgroup
@@ -2317,26 +2240,25 @@ class ABCHandler:
                     self.abcDirectives[directiveKey] = directiveValue
                 continue
 
-            # @TODO: Final remove this line
-            if rule in ['COMMENT', 'LINEFEED', 'WHITESPACE', 'UNKNOWN_DECORATION', 'LINE_CONTINUE']:
-                continue
-
-
-            # remove comment from this value
-            # value = value.split('%', 1)[0].lstrip()
-
             # Store a user defined symbol (Redefinable symbols)
             if rule == 'USER_DEF_FIELD':
                 m = ABCMetadata(value)
                 symbol, rule = m.getUserDefinedSymbol()
                 if rule:
-                    user_defintions[symbol] = rule
+                    self.user_defined_token[symbol] = rule
+                continue
+
+            # Tokenize the internal abc string of a Chord
+            if rule == 'CHORD':
+                t = ABCChord(value, parent_handler=self)
+                t.tokenize()
+                token_list.append(t)
                 continue
 
             # Lookup user defined token
             if rule == 'USER_DEFINED_TOKEN':
                 try:
-                    rule = self.getUserdefinedToken(value, user_defintions)
+                    rule = self.getUserdefinedToken(value)
                 except KeyError:
                     # Token is not user defined or has a default definition
                     pass
@@ -2353,7 +2275,6 @@ class ABCHandler:
                     token = token_class(src=value)
                 except Exception as e:
                     raise ABCHandlerException(f'Creating token [{token_class}] failed.\n{e}')
-
                 token_list.append(token)
             else:
                 environLocal.printDebug(
@@ -2363,19 +2284,13 @@ class ABCHandler:
 
     def tokenProcess(self):
         '''
-        Process all token objects. First, calls preParse(), then
+        Process all token objects.
         does context assignments, then calls parse().
         '''
         # need a key object to get altered pitches
         from music21 import key
 
-        # pre-parse : call on objects that need preliminary processing
-        # metadata, for example, is parsed
-        # lastTimeSignature = None
-        for t in self.tokens:
-            t.preParse()
-
-        def filter_expression_and_articulations(tokens: List[ABCToken]) -> Iterator[ABCToken]:
+        def preprocess(tokens: List[ABCToken]) -> Iterator[ABCToken]:
             '''
             Apply artikulations and expressions to note & chord tokens and
             remove them (do not yield).
@@ -2415,27 +2330,27 @@ class ABCHandler:
         lastGraceToken = None
         lastNoteToken = None
         accidentalized = {}
-        lastBrokenRythm : ABCBrokenRhythmMarker = None
+        lastBrokenRythm = None
         note_token_stack = []
         tokens = self.tokens
         self.tokens = []
 
         # create 3 iterators over the same list
-        p, t, n = tee(filter_expression_and_articulations(tokens), 3)
+        #p, t, n = tee(filter_expression_and_articulations(tokens), 3)
         # for the tPrev interator chain a None in front of the tokens
-        p = chain([None], p)
+        #p = chain([None], p)
         # for the tNext interator chain a None after the tokens
-        n = chain(islice(n, 1, None), [None])
+        #n = chain(islice(n, 1, None), [None])
 
         # Zip the iterators and start to iterate
-        iter_context = zip(p, t, n)
+        #iter_context = zip(p, t, n)
 
         # Parse first the complete Metadata from Header
         # The Header ends with the first 'K:' field or the first
         # Token not an instance of Metadata
         # The Header also ends and start with a new Header
 
-        for tPrev, t, tNext in iter_context:
+        for t in preprocess(tokens):
             # Collect user defined token and replace it with the defined token
             if isinstance(t, ABCMetadata):
                 if t.isMeter():
@@ -2466,26 +2381,12 @@ class ABCHandler:
             elif isinstance(t, ABCBrokenRhythmMarker):
                 if lastNoteToken:
                     # add the lastNote as left side note to broken rythm the broken rythm
-                    t.left(lastNoteToken)
-                    # remember the
                     lastBrokenRythm = t
-                else:
-                    # No note on the left of the BrokenRythm found
-                    continue
 
-                if (isinstance(tPrev, ABCNote) and isinstance(tNext, ABCNote)):
-                    # environLocal.print  Debug(['tokenProcess: got broken rhythm marker', t.src])
-                    tPrev.brokenRhythmMarker = (t.data, 'left')
-                    tNext.brokenRhythmMarker = (t.data, 'right')
-                else:
-                    environLocal.printDebug(
-                        ['broken rhythm marker '
-                         + f'({t.src}) not positioned between two notes or chords'])
-
-                # remove this token, we don't need them any more
+                # @TODO: remove this token, we don't need them any more
                 # continue
             elif isinstance(t, ABCBar):
-                # reset active accidentials in ABC Version > 2.1 only
+                # reset active accidentals in ABC Version > 2.1 only
                 accidentalized = {}
 
             # need to update tuplets with currently active meter
@@ -2524,8 +2425,13 @@ class ABCHandler:
                 lastGraceToken = None
 
             # ABCChord inherits ABCNote, thus getting note is enough for both
-            elif isinstance(t, (ABCNote, ABCChord)):
-                if not isinstance(t, ABCChord):
+            elif isinstance(t, ABCGeneralNote):
+                if isinstance(t, ABCChord):
+                    # process the inner chord subtokens
+                    # @TODO: is accidental propagation relevant for Chords ?
+                    t.chordHandler.tokenProcess()
+
+                if isinstance(t, ABCNote):
                     if not t.isRest:
                         propagation = self._accidentalPropagation()
                         if t.accidental:
@@ -2559,7 +2465,7 @@ class ABCHandler:
                     lastTieToken = None
                 if lastBrokenRythm:
                     # add the note token as right side note to the BrokenRythm
-                    lastBrokenRythm.right(t)
+                    lastBrokenRythm.set_notes(lastNoteToken, t)
                     lastBrokenRythm = None
                 if lastGraceToken is not None:
                     t.inGrace = True
@@ -3439,23 +3345,27 @@ class Test(unittest.TestCase):
     def testNoteParse(self):
         from music21 import key
 
-        an = ABCNote('c')
+        n = ABCNote('c', activeKeySignature = key.KeySignature(3)).m21Object()
+        self.assertEqual(n.nameWithOctave, 'C#5')
+        self.assertEqual(n.pitch.accidental.displayStatus, False)
 
-        # with a key signature, matching steps are assumed altered
-        an.activeKeySignature = key.KeySignature(3)
-        self.assertEqual(an.getPitchName('c'), ('C#5', False))
+        n = ABCNote('c').m21Object()
+        self.assertEqual(n.nameWithOctave, 'C5')
 
-        an.activeKeySignature = None
-        self.assertEqual(an.getPitchName('c'), ('C5', None))
-        self.assertEqual(an.getPitchName('^c'), ('C#5', True))
+        n = ABCNote('^c').m21Object()
+        self.assertEqual(n.nameWithOctave, 'C#5')
+        self.assertEqual(n.pitch.accidental.displayStatus, True)
 
-        an.activeKeySignature = key.KeySignature(-3)
-        self.assertEqual(an.getPitchName('B'), ('B-4', False))
+        n = ABCNote('B', activeKeySignature=key.KeySignature(-3)).m21Object()
+        self.assertEqual(n.nameWithOctave, 'B-4')
+        self.assertEqual(n.pitch.accidental.displayStatus, False)
 
-        an.activeKeySignature = None
-        self.assertEqual(an.getPitchName('B'), ('B4', None))
-        an = ABCNote('_B')
-        self.assertEqual(an.getPitchName('_B'), ('B-4', True))
+        n = ABCNote('B').m21Object()
+        self.assertEqual(n.nameWithOctave, 'B-4')
+
+        n = ABCNote('_B').m21Object()
+        self.assertEqual(n.nameWithOctave, 'B-4')
+        self.assertEqual(n.pitch.accidental.displayStatus, True)
 
     def testSplitByMeasure(self):
 
