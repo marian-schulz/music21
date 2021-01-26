@@ -1871,9 +1871,8 @@ class ABCNote(ABCGeneralNote):
         self.isRest = self.pitchClass == 'Z'
         self.accidental = RE_ACCIDENTALS.findall(self.src)[0]
 
-    def getPitchName(
+    def m21Object(
         self,
-        strSrc: str = None,
         forceKeySignature=None
     ) -> Tuple[Optional[str], Union[bool, None]]:
         '''
@@ -1931,94 +1930,42 @@ class ABCNote(ABCGeneralNote):
         Traceback (most recent call last):
         music21.abcFormat.ABCHandlerException: cannot find any pitch information in: 'x'
         '''
-        if strSrc:
-            try:
-                name = rePitchName.findall(strSrc)[0]
-            except IndexError:  # no matches  # pragma: no cover
-                raise ABCHandlerException(f'cannot find any pitch information in: {strSrc!r}')
-        else:
-            name = self.abc_pitch_name
 
-        environLocal.printDebug(['getPitchName:', strSrc])
-
-        if name == 'z':
+        if self.pitch_name == 'z':
             return (None, None)  # designates a rest
 
-        if forceKeySignature is not None:
-            activeKeySignature = forceKeySignature
-        else:  # may be None
-            activeKeySignature = self.activeKeySignature
+        # Erstelle ein mapping für pitches die entweder in der signature oder in carry vorhanden sind
+        # Übernehme das Accidential für diese pitches aus carry, wenn nicht vorhanden aus der signature
+        active_accidentials = { p: self.carriedAccidental.get(p, signature[p])
+                                for p in "ABCDEFG" if p in signature or p in self.carriedAccidental}
 
-        try:  # returns pStr, accidentalDisplayStatus
-            return _pitchTranslationCache[(strSrc,
-                                           self.carriedAccidental,
-                                           str(activeKeySignature))]
-        except KeyError:
-            pass
-
-        octave = 5 if name.islower() else 4
-        # look in source string for register modification
-        octave -= strSrc.count(',')
-        octave += strSrc.count("'")
-
-        # get an accidental string
-        accString = '-' * strSrc.count('_')  # m21 symbols
-        accString += '#' * strSrc.count('^')  # m21 symbols
-        accString += 'n' * strSrc.count('=')  # m21 symbols
-
-        carriedAccString = ''
-        if self.carriedAccidental:
-            # No overriding accidental attached to this note
-            # force carrying through the measure.
-            carriedAccString += '-' * self.carriedAccidental.count('_')  # m21 symbols
-            carriedAccString += '#' * self.carriedAccidental.count('^')  # m21 symbols
-            carriedAccString += 'n' * self.carriedAccidental.count('=')  # m21 symbols
-
-        if carriedAccString and accString:
-            raise ABCHandlerException('Carried accidentals not rendered moot.')
-        # if there is an explicit accidental, regardless of key, it should
-        # be shown: this will works for naturals well
-        if carriedAccString:
-            # An accidental carrying through the measure is supposed to be applied.
-            # This will be set iff no explicit accidental is attached to the note.
-            accidentalDisplayStatus = None
-        elif accString != '':
-            accidentalDisplayStatus = True
-        # if we do not have a key signature, and have accidentals, set to None
-        elif activeKeySignature is None:
-            accidentalDisplayStatus = None
-        # pitches are key dependent: accidentals are not given
-        # if we have a key and find a name, that does not have a n, must be
-        # altered
+        if self.pitch_name in active_accidentials:
+            if not self.accidential:
+                 # the abc pitch has no accidential but there is an active accidential
+                 accidential, display = active_accidentials[self.pitch_name], False
+            elif self.accidential == active_accidentials[self.pitch_name]:
+                # the abc pitch has the same accidential as in active accidentials
+                accidential, display = self.accidential, False
+            else:
+                # the abc pitch has an accidential but it is not the same as in the active accidentials
+                accidential, display = self.accidential, True
+        elif self.accidential:
+            # the abc pitch has an accidential but not a an active accidential
+            accidential, display = self.accidential, True
         else:
-            alteredPitches = activeKeySignature.alteredPitches
-            # just the steps, no accidentals
-            alteredPitchSteps = [p.step.lower() for p in alteredPitches]
-            # includes #, -
-            alteredPitchNames = [p.name.lower() for p in alteredPitches]
-            # environLocal.printDebug(['alteredPitches', alteredPitches])
+            # the abc pitch has no accidential and no active accidential
+            accidential, display = '', None
 
-            if name.lower() in alteredPitchSteps:
-                # get the corresponding index in the name
-                name = alteredPitchNames[alteredPitchSteps.index(name.lower())]
-            # set to false, as do not need to show w/ key sig
-            accidentalDisplayStatus = False
 
-        # making upper here, but this is not relevant
-        if carriedAccString:
-            pStr = f'{name.upper()}{carriedAccString}{octave}'
-        else:
-            pStr = f'{name.upper()}{accString}{octave}'
+        from music21 import note
 
-        # store in global cache for faster speed
-        _cacheKey = (
-            strSrc,
-            self.carriedAccidental,
-            str(activeKeySignature)
-        )
+        n = note.Note(pitchName=f'{self.pitch_name}{self.accidental}')
+        n.quarterLength = self.quarterLength
+        n.octave = self.ocatve
+        if accidential:
+            n.pitch.accidental.displayStatus = display
 
-        _pitchTranslationCache[_cacheKey] = (pStr, accidentalDisplayStatus)
-        return (pStr, accidentalDisplayStatus)
+        return n
 
     def parse(
         self,
