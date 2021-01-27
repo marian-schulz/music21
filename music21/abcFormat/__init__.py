@@ -101,8 +101,7 @@ reChordSymbol = re.compile('"[^"]*"')  # non greedy
 reChord = re.compile('[.*?]')  # non greedy
 RE_ABC_VERSION = re.compile(r'(?:((^[^%].*)?[\n])*%abc-)(\d+)\.(\d+)\.?(\d+)?')
 RE_DIRECTIVE = re.compile(r'^%%([a-z\-]+)\s+([^\s]+)(.*)')
-RE_PICH_AND_OCTAVE = re.compile(r'[a-gA-Gz][\',]*')
-RE_ACCIDENTALS = re.compile('[=_\^]*')
+RE_ABC_NOTE = re.compile(r'([\^_=]*)([A-Ga-gz])([0-9/\',]*)')
 
 # ------------------------------------------------------------------------------
 class ABCTokenException(exceptions21.Music21Exception):
@@ -879,11 +878,6 @@ class ABCMetadata(ABCToken):
         >>> sc.flat.notes[0].duration.type
         'quarter'
         '''
-        # environLocal.printDebug(['getDefaultQuarterLength', self.data])
-        if not self.isDefaultNoteLength():
-            raise ABCTokenException(
-                f'no quarter length associated with this metadata: {self.data}')
-
         if self.isDefaultNoteLength() and '/' in self.data:
             # should be in L:1/4 form
             n, d = self.data.split('/')
@@ -908,7 +902,8 @@ class ABCMetadata(ABCToken):
             else:
                 return 0.5  # otherwise it is an eighth note
         else:
-            return None
+            raise ABCTokenException(
+                f'no quarter length associated with this metadata: {self.data}')
 
 
 class ABCBar(ABCToken):
@@ -1665,7 +1660,7 @@ class ABCGeneralNote(ABCToken):
         return:
             music21 object corresponding to the token
         """
-        raise NotImplementedError()
+        return  one
 
     def apply_expressions(self, obj: 'music21.note.GeneralNote'):
         pass
@@ -1780,9 +1775,8 @@ class ABCNote(ABCGeneralNote):
         >>> abcFormat.ABCNote._parse_note("^_C'6/4")
         ('C', '-', 5, '6/4')
         """
-        RE_MATCH_ABC_NOTE = re.compile(r'([\^_=]*)([A-Ga-gz])([0-9/\',]*)').match
         ACCIDENTAL_MAP = {'^': '#', '^^': '##', '=': 'n', '_': '-', '__': '--'}
-        match = RE_MATCH_ABC_NOTE(src)
+        match = RE_ABC_NOTE.match(src)
         if match:
             accidental = match.group(1)
             if accidental:
@@ -2031,7 +2025,6 @@ TOKEN_SPEC = {
     'COMMENT': ('[ ]*%.*$', None),
     'BARLINE': (BARLINES, ABCBar),
     'CHORD_SYMBOL': (r'"[^"]*"', ABCChordSymbol),
-    #'LINE_CONTINUE': (r'[\\\\][ ]*$', None),
     'INLINE_FIELD': (r'\[[A-Zwms]:[^\]%]*\]', ABCMetadata),
     'TUPLET_GENERAL': (r'\([2-9]([:][2-9]?([:][2-9]?)?)?', ABCTuplet),
     'TUPLET_SIMPLE': (r'\([2-9]', ABCTuplet),
@@ -2064,7 +2057,6 @@ TOKEN_SPEC = {
     'STRACCENT': (r'k', ABCStraccent),
     'USER_DEFINED_TOKEN': (r'[H-Wh-w~]', None),
     'UNKNOWN_DECORATION': (r'![^!]+!', None),
-    #'WHITESPACE': (r'[ ]+', None),
 }
 
 # Build regular expression from token specification
@@ -2100,7 +2092,7 @@ class ABCHandler:
         self.src = ''
 
     @staticmethod
-    def barlineTokenFilter(token: str) -> Iterable[ABCBar]:
+    def barlineTokenFilter(token: str) -> ABCBar:
         '''
         Some single barline tokens are better replaced
         with two tokens. This method, given a token,
@@ -2173,30 +2165,30 @@ class ABCHandler:
             return self.abcDirectives['propagate-accidentals']
         return 'pitch'  # Default per abc 2.1 standard
 
-    def parseABCVersion(self, src: str):
+    def _parseABCVersion(self, src: str):
         '''
         Every abc file conforming to the standard should start with the line
         %abc-2.1
 
         >>> ah = abcFormat.ABCHandler()
-        >>> ah.parseABCVersion('%abc-2.3.2')
+        >>> ah._parseABCVersion('%abc-2.3.2')
         >>> ah.abcVersion
         (2, 3, 2)
 
         Set version only if not explicit set
         >>> ah = abcFormat.ABCHandler(abcVersion=(1, 3, 0))
-        >>> ah.parseABCVersion('%abc-2.3.2')
+        >>> ah._parseABCVersion('%abc-2.3.2')
         >>> ah.abcVersion
         (1, 3, 0)
 
         Catch only abc version as first comment line
         >>> ah = abcFormat.ABCHandler()
-        >>> ah.parseABCVersion('%first comment\\n%abc-2.3.2')
+        >>> ah._parseABCVersion('%first comment\\n%abc-2.3.2')
         >>> ah.abcVersion
 
         But ignore post comments
         >>> ah = abcFormat.ABCHandler()
-        >>> ah.parseABCVersion('X:1 % reference number\\n%abc-2.3.2')
+        >>> ah._parseABCVersion('X:1 % reference number\\n%abc-2.3.2')
         >>> ah.abcVersion
         (2, 3, 2)
 
@@ -2216,51 +2208,32 @@ class ABCHandler:
         >>> abch = abcFormat.ABCHandler()
         >>> abch.tokens
         []
-        >>> abch.process('X: 1')
-        >>> abch.tokens
+        >>> type(abch.tokenize(''))
+        <class 'generator'>
+        >>> list(abch.tokenize('X: 1'))
         [<music21.abcFormat.ABCMetadata 'X: 1'>]
-
-        >>> abch = abcFormat.ABCHandler()
-        >>> abch.process('(6f')
-        >>> abch.tokens
+        >>> list(abch.tokenize('(6f'))
         [<music21.abcFormat.ABCTuplet '(6'>, <music21.abcFormat.ABCNote 'f'>]
-
-        >>> abch = abcFormat.ABCHandler()
-        >>> abch.process('(6:4f')
-        >>> abch.tokens
+        >>> list(abch.tokenize('(6:4f'))
         [<music21.abcFormat.ABCTuplet '(6:4'>, <music21.abcFormat.ABCNote 'f'>]
-
-        >>> abch = abcFormat.ABCHandler()
-        >>> abch.process('(6:4:2f')
-        >>> abch.tokens
+        >>> list(abch.tokenize('(6:4:2f'))
         [<music21.abcFormat.ABCTuplet '(6:4:2'>, <music21.abcFormat.ABCNote 'f'>]
-
-        >>> abch = abcFormat.ABCHandler()
-        >>> abch.process('(6::2f')
-        >>> abch.tokens
+        >>> list(abch.tokenize('(6::2f'))
         [<music21.abcFormat.ABCTuplet '(6::2'>, <music21.abcFormat.ABCNote 'f'>]
-
-        >>> abch = abcFormat.ABCHandler()
         >>> list(abch.tokenize('TD'))
         [<music21.abcFormat.ABCTrill 'T'>, <music21.abcFormat.ABCNote 'D'>]
-
-        >>> abch = abcFormat.ABCHandler()
-        >>> abch.process('U:T=!upbow!\\nTD')
-        >>> abch.tokens
+        >>> list(abch.tokenize('U:T=!upbow!\\nTD'))
         [<music21.abcFormat.ABCUpbow 'T'>, <music21.abcFormat.ABCNote 'D'>]
-
-        >>> abch = abcFormat.ABCHandler()
-        >>> abch.process('K: C % comment')
-        >>> abch.tokens
+        >>> list(abch.tokenize('uD'))
+        [<music21.abcFormat.ABCUpbow 'u'>, <music21.abcFormat.ABCNote 'D'>]
+        >>> list(abch.tokenize('U:u=.\\nuD'))
+        [<music21.abcFormat.ABCStaccato 'u'>, <music21.abcFormat.ABCNote 'D'>]
+        >>> list(abch.tokenize('K: C % comment'))
         [<music21.abcFormat.ABCMetadata 'K: C'>]
-
-        >>> abch = abcFormat.ABCHandler()
-        >>> abch.process('C: Tom\\n+:Waits')
-        >>> abch.tokens
+        >>> list(abch.tokenize('C: Tom\\n+:Waits'))
         [<music21.abcFormat.ABCMetadata 'C: Tom Waits'>]
         """
-
-        self.parseABCVersion(src)
+        self._parseABCVersion(src)
 
         for m in TOKEN_RE.finditer(src):
             rule = m.lastgroup
@@ -2299,14 +2272,13 @@ class ABCHandler:
                 yield t
                 continue
 
+            # Lookup rule from an user defined token
             if rule == 'USER_DEFINED_TOKEN':
-                # Lookup user defined token
                 try:
                     rule = self.getUserdefinedToken(value)
                 except KeyError:
-                    # Token is not user defined or has a default definition
-                    pass
-
+                    environLocal.printDebug(
+                        [f'Token "value" is not user defined or has a default definition'])
 
             # Lookup an ABCToken class for the rule and create the token
             regex, token_class = TOKEN_SPEC[rule]
@@ -2321,7 +2293,8 @@ class ABCHandler:
 
     def tokenProcess(self, tokens: Iterable[ABCToken]):
         self.tokens = []
-        lastDefaultQL = 0.5  # The default unit note length is 1/8.
+        lastDefaultQL = 0.5              # The last default quarter length
+        irregularDefaultQL = True        # The default QL was not set by the 'L:' field
         lastKeySignature = None
         lastTimeSignatureObj = None  # an m21 object
         lastTupletToken = None  # a token obj; keeps count of usage
@@ -2330,13 +2303,12 @@ class ABCHandler:
         lastNoteToken = None
         accidentalized = {}
         lastBrokenRythm = None
-        lastExpressions = []  # collection of expressions
+        lastExpressions = []    # collection of expressions
         lastArticulations = []  # collection of articulation
 
         for t in tokens:
             # note & chords first, they are the most common tokens
             if isinstance(t, ABCGeneralNote):
-                # Process the subtokens of a chord
                 if isinstance(t, ABCChord):
                     # process the inner chord subtokens
                     t.chordHandler.tokenProcess(t.subTokens)
@@ -2356,14 +2328,6 @@ class ABCHandler:
                             t.carriedAccidental = accidentalized[t.pitch_name]
                         elif propagation == 'octave' and (t.pitch_name, t.octave) in accidentalized:
                             t.carriedAccidental = accidentalized[(t.pitch_name, t.octave)]
-
-                if lastDefaultQL is None:
-                    # @TODO: Should be irrelevant, there is an default (0.5=1/8) value
-                    # for the default note length
-                    raise ABCHandlerException(
-                        'no active default note length provided for note processing. '
-                        + f' t: {t}'
-                    )
 
                 t.activeDefaultQuarterLength = lastDefaultQL
                 t.activeKeySignature = lastKeySignature
@@ -2413,10 +2377,16 @@ class ABCHandler:
                     ts = t.getTimeSignatureObject()
                     if ts:
                         lastTimeSignatureObj = ts
+                        # If the DefaultQL is irregular (not set by 'L:')
+                        # and the meter is not in the body (lastNoteToken is None)
+                        # we apply a new irregular DefaultQL by the meter.
+                        if irregularDefaultQL and lastNoteToken is None:
+                            lastDefaultQL = t.getDefaultQuarterLength()
 
                 elif t.isDefaultNoteLength():
                     dl = t.getDefaultQuarterLength()
                     if dl:
+                        irregularDefaultQL = False
                         lastDefaultQL = dl
 
                 elif t.isKey():
