@@ -2121,7 +2121,7 @@ TOKEN_SPEC = {
     'STRACCENT': ('!straccent!', ABCStraccent),  # Not found in ABC format specification
     'REDEFINED_SYMBOL': (r'[H-Wh-w~]', None),
     'UNKNOWN_DECORATION': (r'![^!]+!', None),
-    'ABCChordSymbol': (r'"[^"]*"', ABCChordSymbol)
+
 }
 
 def build_spec():
@@ -2131,19 +2131,22 @@ def build_spec():
             if inspect.isclass(token_class) and issubclass(token_class,
                                                            token_base_class) and token_class is not token_base_class:
                 if hasattr(token_class, 'match'):
-                    TOKEN_SPEC[name] = (token_class.match, token_class)
+                    TOKEN_SPEC[f'{name}'] = (f"{token_class.match}", token_class)
                     print(f'"{name}": {(token_class.match, token_class)}')
                 else:
                     environLocal.printDebug(
                         [f'Token Class "{name}" has no attribute match"']
                     )
 
-    return TOKEN_SPEC, re.compile(r'|'.join(r'(?P<%s>%s)' % (rule, v[0])
-                                         for rule, v in TOKEN_SPEC.items()),
-                               re.MULTILINE)
 
-TOKEN_SPEC, TOKEN_RE = build_spec()
+
+TOKEN_SPEC['ABCChordSymbol'] = (r'"[^"]*"', ABCChordSymbol)
+
 #breakpoint()
+
+TOKEN_RE = re.compile(r'|'.join(r'(?P<%s>%s)' % (rule, v[0])
+                                for rule, v in TOKEN_SPEC.items()),
+                           re.MULTILINE)
 
 #from pprint import pprint
 #pprint (TOKEN_SPEC)
