@@ -2211,7 +2211,7 @@ class ABCHandler:
             abcPatch = int(verMats.group(5)) if verMats.group(5) else 0
             self.abcVersion = (abcMajor, abcMinor, abcPatch)
 
-    def tokenize(self, strSrc: str) -> Iterable[ABCToken]:
+    def tokenize(self, src: str) -> Iterable[ABCToken]:
         """
         >>> abch = abcFormat.ABCHandler()
         >>> abch.tokens
@@ -2245,23 +2245,24 @@ class ABCHandler:
         [<music21.abcFormat.ABCTrill 'T'>, <music21.abcFormat.ABCNote 'D'>]
 
         >>> abch = abcFormat.ABCHandler()
-        >>> list(abch.tokenize('U:T=!upbow!\\nTD'))
+        >>> abch.process('U:T=!upbow!\\nTD')
+        >>> abch.tokens
         [<music21.abcFormat.ABCUpbow 'T'>, <music21.abcFormat.ABCNote 'D'>]
 
         >>> abch = abcFormat.ABCHandler()
-        >>> list(abch.tokenize('K: C % comment'))
+        >>> abch.process('K: C % comment')
+        >>> abch.tokens
         [<music21.abcFormat.ABCMetadata 'K: C'>]
 
         >>> abch = abcFormat.ABCHandler()
-        >>> list(abch.tokenize('C: Tom\\n+:Waits'))
+        >>> abch.process('C: Tom\\n+:Waits')
+        >>> abch.tokens
         [<music21.abcFormat.ABCMetadata 'C: Tom Waits'>]
         """
 
-        self.parseABCVersion(strSrc)
+        self.parseABCVersion(src)
 
-        self.src = strSrc
-
-        for m in TOKEN_RE.finditer(strSrc):
+        for m in TOKEN_RE.finditer(src):
             rule = m.lastgroup
             value = m.group()
 
@@ -2318,8 +2319,8 @@ class ABCHandler:
                 environLocal.printDebug(
                     [f'No token class for rule "{rule}" with matching regex "{regex}"'])
 
-    def tokenProcess(self, tokens: Iterable[ABCToken]) -> Iterable[ABCToken]:
-
+    def tokenProcess(self, tokens: Iterable[ABCToken]):
+        self.tokens = []
         lastDefaultQL = 0.5  # The default unit note length is 1/8.
         lastKeySignature = None
         lastTimeSignatureObj = None  # an m21 object
@@ -2398,17 +2399,14 @@ class ABCHandler:
 
                 # remember this note/chord
                 lastNoteToken = t
-                yield t
 
             # Filter and collect articulation token
             elif isinstance(t, ABCArticulation):
                 lastArticulations.append(t)
-                continue
 
             elif isinstance(t, ABCExpressions):
                 # Filter and collect expression token
                 lastExpressions.append(t.m21Object())
-                continue
 
             elif isinstance(t, ABCMetadata):
                 if t.isMeter():
@@ -2421,8 +2419,6 @@ class ABCHandler:
                     if dl:
                         lastDefaultQL = dl
 
-                    # @TODO: did we need this token anymore ?
-
                 elif t.isKey():
                     ks = t.getKeySignatureObject()
                     if ks:
@@ -2433,8 +2429,6 @@ class ABCHandler:
                         # in case they aren't closed.
                         self.activeParens = []
                         self.activeSpanners = []
-
-                yield t
 
             # broken rhythms need to be applied to previous and next notes
             elif isinstance(t, ABCBrokenRhythmMarker):
@@ -2447,7 +2441,6 @@ class ABCHandler:
                 accidentalized = {}
                 # @TODO: the last unicum with parse() - kill it or not
                 t.parse()
-                yield t
 
             # need to update tuplets with currently active meter
             elif isinstance(t, ABCTuplet):
@@ -2458,7 +2451,6 @@ class ABCHandler:
                 t.updateNoteCount()
                 lastTupletToken = t
                 self.activeParens.append('Tuplet')
-                yield t
 
             # notes within slur marks need to be added to the spanner
             elif isinstance(t, ABCSpanner):
@@ -2466,7 +2458,6 @@ class ABCHandler:
                 self.activeSpanners.append(t.m21Object())
                 self.activeParens.append(t)
                 # @TODO: did we need this token anymore ?
-                yield t
 
             elif isinstance(t, ABCParenStop):
                 if self.activeParens:
@@ -2484,16 +2475,14 @@ class ABCHandler:
 
             elif isinstance(t, ABCGraceStart):
                 lastGraceToken = t
-
             elif isinstance(t, ABCGraceStop):
                 lastGraceToken = None
 
-    def process(self, src: str) -> List[ABCToken]:
-        self.tokens = list(
-            self.tokenProcess(
-                self.tokenize(src)
-            )
-        )
+            self.tokens.append(t)
+
+    def process(self, src: str):
+        self.src = src
+        self.tokenProcess(self.tokenize(src))
 
     # --------------------------------------------------------------------------
     # access tokens
@@ -3492,7 +3481,7 @@ class Test(unittest.TestCase):
         ahs = ah.splitByReferenceNumber()
         self.assertEqual(len(ahs), 1)
         self.assertEqual(list(ahs.keys()), [5])
-        self.assertEqual(len(ahs[5]), 87)  # tokens
+        self.assertEqual(len(ahs[5]), 88)  # tokens
         self.assertEqual(ahs[5].tokens[0].src, 'X:5')  # first is retained
         # noinspection SpellCheckingInspection
         self.assertEqual(ahs[5].getTitle(), 'The Begger Boy')  # tokens
@@ -3509,7 +3498,7 @@ class Test(unittest.TestCase):
 
         ah = ABCHandler()
         ah.process(testFiles.valentineJigg)  # has no reference num
-        self.assertEqual(len(ah), 243)  # total tokens
+        self.assertEqual(len(ah), 244)  # total tokens
 
         ahs = ah.splitByReferenceNumber()
         self.assertEqual(len(ahs), 3)
@@ -3522,7 +3511,7 @@ class Test(unittest.TestCase):
         self.assertEqual(ahs[166].tokens[0].src, 'X:166')  # first is retained
         # noinspection SpellCheckingInspection
         self.assertEqual(ahs[166].getTitle(), '166  Valentine Jigg   (Pe)')
-        self.assertEqual(len(ahs[166]), 66)  # tokens
+        self.assertEqual(len(ahs[166]), 67)  # tokens
 
         self.assertEqual(ahs[167].tokens[0].src, 'X:167')  # first is retained
         self.assertEqual(ahs[167].getTitle(), '167  The Dublin Jig     (HJ)')
@@ -3620,33 +3609,69 @@ class Test(unittest.TestCase):
 <music21.abcFormat.ABCNote 'B,2'>
 <music21.abcFormat.ABCBar '|'>
 <music21.abcFormat.ABCDimStart '!diminuendo(!'>
+<music21.abcFormat.ABCStaccato '.'>
 <music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCNote '^D'>
+<music21.abcFormat.ABCStaccato '.'>
 <music21.abcFormat.ABCNote 'E'>
+<music21.abcFormat.ABCTie '-'>
 <music21.abcFormat.ABCNote 'E'>
+<music21.abcFormat.ABCParenStop '!diminuendo)!'>
 <music21.abcFormat.ABCSlurStart '('>
 <music21.abcFormat.ABCTuplet '(3'>
+<music21.abcFormat.ABCStaccato '.'>
 <music21.abcFormat.ABCNote 'G'>
+<music21.abcFormat.ABCStaccato '.'>
 <music21.abcFormat.ABCNote 'F'>
+<music21.abcFormat.ABCStaccato '.'>
+<music21.abcFormat.ABCAccent 'K'>
 <music21.abcFormat.ABCNote 'G'>
+<music21.abcFormat.ABCParenStop ')'>
 <music21.abcFormat.ABCNote 'B'>
 <music21.abcFormat.ABCNote 'A'>
+<music21.abcFormat.ABCParenStop ')'>
 <music21.abcFormat.ABCBar '|'>
 <music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCNote '^D'>
+<music21.abcFormat.ABCTenuto 'M'>
 <music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCNote 'F'>
 <music21.abcFormat.ABCTuplet '(3'>
 <music21.abcFormat.ABCSlurStart '('>
 <music21.abcFormat.ABCNote 'G'>
+<music21.abcFormat.ABCTie '-'>
 <music21.abcFormat.ABCNote 'G'>
 <music21.abcFormat.ABCNote 'G'>
+<music21.abcFormat.ABCParenStop ')'>
+<music21.abcFormat.ABCParenStop ')'>
 <music21.abcFormat.ABCNote 'B'>
+<music21.abcFormat.ABCStraccent 'k'>
+<music21.abcFormat.ABCTenuto 'M'>
 <music21.abcFormat.ABCNote 'A'>
 <music21.abcFormat.ABCBar '|'>
 <music21.abcFormat.ABCSlurStart '('>
 <music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCSlurStart '('>
+<music21.abcFormat.ABCNote '^D'>
+<music21.abcFormat.ABCNote 'E'>
+<music21.abcFormat.ABCParenStop ')'>
+<music21.abcFormat.ABCNote 'F'>
+<music21.abcFormat.ABCParenStop ')'>
+<music21.abcFormat.ABCTuplet '(3'>
+<music21.abcFormat.ABCSlurStart '('>
+<music21.abcFormat.ABCStraccent 'k'>
+<music21.abcFormat.ABCNote 'G'>
+<music21.abcFormat.ABCAccent 'K'>
+<music21.abcFormat.ABCNote 'F'>
+<music21.abcFormat.ABCParenStop ')'>
+<music21.abcFormat.ABCNote 'G'>
+<music21.abcFormat.ABCParenStop ')'>
+<music21.abcFormat.ABCNote 'A'>
+<music21.abcFormat.ABCTie '-'>
+<music21.abcFormat.ABCNote 'A'>
+<music21.abcFormat.ABCBar '|'>
+<music21.abcFormat.ABCSlurStart '('>
+<music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCNote '^D'>
 <music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCNote 'F'>
@@ -3655,19 +3680,9 @@ class Test(unittest.TestCase):
 <music21.abcFormat.ABCNote 'G'>
 <music21.abcFormat.ABCNote 'F'>
 <music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCNote 'A'>
-<music21.abcFormat.ABCNote 'A'>
-<music21.abcFormat.ABCBar '|'>
-<music21.abcFormat.ABCSlurStart '('>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCNote '^D'>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCNote 'F'>
-<music21.abcFormat.ABCTuplet '(3'>
-<music21.abcFormat.ABCSlurStart '('>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCNote 'F'>
-<music21.abcFormat.ABCNote 'G'>
+<music21.abcFormat.ABCParenStop ')'>
+<music21.abcFormat.ABCParenStop ')'>
+<music21.abcFormat.ABCParenStop ')'>
 <music21.abcFormat.ABCNote 'B'>
 <music21.abcFormat.ABCNote 'A'>
 <music21.abcFormat.ABCBar '|'>
@@ -3677,7 +3692,7 @@ class Test(unittest.TestCase):
         for index, (soll, ist) in enumerate(zip(tokensCorrect, tokensReceived)):
             self.assertEqual(ist, soll, f'Fehler token #{index}')
 
-        self.assertEqual(len(ah), 60)
+        self.assertEqual(len(ah), 86)
         tokens = ah.tokens
         i = 0
         j = 0
@@ -3699,15 +3714,14 @@ class Test(unittest.TestCase):
     def testGrace(self):
         from music21.abcFormat import testFiles
         ah = ABCHandler()
-        t = list(ah.tokenize(testFiles.graceTest))
-        self.assertEqual(len(t), 85)
+        ah.process(testFiles.graceTest)
+        self.assertEqual(len(ah), 85)
 
     def testGuineaPig(self):
         from music21.abcFormat import testFiles
         ah = ABCHandler()
-        t = list(ah.tokenize(testFiles.guineapigTest))
-        self.assertEqual(len(t), 105)
-
+        ah.process(testFiles.guineapigTest)
+        self.assertEqual(len(ah), 105)
 
 # ------------------------------------------------------------------------------
 # define presented order in documentation
