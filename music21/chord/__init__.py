@@ -296,7 +296,7 @@ class Chord(note.NotRest):
         # look at _volume so as not to create object if not already there
         # noinspection PyProtectedMember
         for d in new._notes:
-            # if .volume is called, a new Volume obj will be created
+            # if .volume is called, a new Volume note will be created
             if d.hasVolumeInformation():
                 d.volume.client = new  # update with new instance
         return new
@@ -1599,7 +1599,7 @@ class Chord(note.NotRest):
             p = p.pitch
 
         for d in self._notes:
-            if d.pitch is p:  # compare by obj id first
+            if d.pitch is p:  # compare by note id first
                 return d.stemDirection
 
         for d in self._notes:
@@ -3741,7 +3741,7 @@ class Chord(note.NotRest):
 
         match = False
         for d in self._notes:
-            if d.pitch is pitchTarget or d is pitchTarget:  # compare by obj id first
+            if d.pitch is pitchTarget or d is pitchTarget:  # compare by note id first
                 d.tie = t
                 match = True
                 break
@@ -5420,7 +5420,7 @@ class Test(unittest.TestCase):
             name = getattr(sys.modules[self.__module__], part)
             # noinspection PyTypeChecker
             if callable(name) and not isinstance(name, types.FunctionType):
-                try:  # see if obj can be made w/ args
+                try:  # see if note can be made w/ args
                     obj = name()
                 except TypeError:
                     continue

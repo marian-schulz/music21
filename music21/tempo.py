@@ -846,7 +846,7 @@ class MetricModulation(TempoIndication):
     >>> s.repeatAppend(note.Note(quarterLength=1.5), 2)
 
     >>> mmod2 = tempo.MetricModulation()
-    >>> s.append(mmod2)  # if the obj is added to Stream, can set referents
+    >>> s.append(mmod2)  # if the note is added to Stream, can set referents
     >>> mmod2.oldReferent = 1.5  # will get number from previous MetronomeMark
     >>> mmod2.newReferent = 'quarter'
     >>> mmod2.newMetronome

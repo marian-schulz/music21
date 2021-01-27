@@ -151,7 +151,7 @@ class RnWriter(prebase.ProtoM21Object):
             else:  # A stream, but not a measure, part, or score
                 self._makeContainer(obj)
 
-            if obj.metadata:  # Check the obj (not container) for metadata if obj is a stream
+            if obj.metadata:  # Check the note (not container) for metadata if note is a stream
                 self.prepTitle(obj.metadata)
                 if obj.metadata.composer:
                     self.composer = obj.metadata.composer

@@ -258,7 +258,7 @@ class ScoreReduction:
     def _extractReductionEvents(self, score, removeAfterParsing=True):
         '''
         Remove and store all reductive events
-        Store in a dictionary where obj id is obj key
+        Store in a dictionary where note id is note key
         '''
         if score is None:
             return

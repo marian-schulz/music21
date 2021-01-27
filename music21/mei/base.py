@@ -1138,15 +1138,15 @@ def _tieFromAttr(attr):
 
 def addSlurs(elem, obj, slurBundle):
     '''
-    If relevant, add a slur to an ``obj`` (object) that was created from an ``elem`` (element).
+    If relevant, add a slur to an ``note`` (object) that was created from an ``elem`` (element).
 
-    :param elem: The :class:`Element` that caused creation of the ``obj``.
+    :param elem: The :class:`Element` that caused creation of the ``note``.
     :type elem: :class:`xml.etree.ElementTree.Element`
     :param obj: The musical object (:class:`Note`, :class:`Chord`, etc.) created from ``elem``, to
         which a slur might be attached.
     :type obj: :class:`music21.base.Music21Object`
     :param slurBundle: The :class:`Slur`-holding :class:`SpannerBundle` associated with the
-        :class:`Stream` that holds ``obj``.
+        :class:`Stream` that holds ``note``.
     :type slurBundle: :class:`music21.spanner.SpannerBundle`
     :returns: Whether at least one slur was added.
     :rtype: bool
@@ -1164,7 +1164,7 @@ def addSlurs(elem, obj, slurBundle):
        affected elements (``@m21SlurStart`` to the element at the start of the slur and
        ``@m21SlurEnd`` to the element at the end). These attributes hold the ``id`` of a
        :class:`Slur` in the ``slurBundle``, allowing :func:`addSlurs` to find the slur and add
-       ``obj`` to it.
+       ``note`` to it.
 
     .. caution:: If an ``elem`` has an @m21SlurStart or @m21SlurEnd attribute that refer to an
         object not found in the ``slurBundle``, the slur is silently dropped.

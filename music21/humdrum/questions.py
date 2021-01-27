@@ -87,7 +87,7 @@ class Test(unittest.TestCase):
                     dynamics = subStream.filterClass(articulations.DynamicArticulation)
                     for unused_obj in dynamics:
                         # can we increment dynamics by dynamics?
-                        # obj += 'pppp'
+                        # note += 'pppp'
                         pass
                     # will these changes be reflected in the source part stream?
 

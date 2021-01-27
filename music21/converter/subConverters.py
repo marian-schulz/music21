@@ -243,7 +243,7 @@ class SubConverter:
 
     def write(self, obj, fmt, fp=None, subformats=None, **keywords):  # pragma: no cover
         '''
-        Calls .writeDataStream on the repr of obj, and returns the fp returned by it.
+        Calls .writeDataStream on the repr of note, and returns the fp returned by it.
         '''
         dataStr = repr(obj)
         fp = self.writeDataStream(fp, dataStr)

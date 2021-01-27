@@ -2155,10 +2155,10 @@ class Duration(prebase.ProtoM21Object, SlottedObjectMixin):
         else:  # assume that we got an object
             durObjSlice = sliceIndex
 
-        # this will not work if componentIndexAtQtrPosition returned an obj
-        # get the start pos in ql of this dur obj
+        # this will not work if componentIndexAtQtrPosition returned an note
+        # get the start pos in ql of this dur note
         durationStartTime = self.componentStartTime(sliceIndex)
-        # find difference between desired split and start pos of this dur obj
+        # find difference between desired split and start pos of this dur note
         # this is the left side dur
         slicePoint = quarterPosition - durationStartTime
         # this is the right side dur
@@ -3262,7 +3262,7 @@ class Test(unittest.TestCase):
             name = getattr(sys.modules[self.__module__], part)
             # noinspection PyTypeChecker
             if callable(name) and not isinstance(name, types.FunctionType):
-                try:  # see if obj can be made w/ args
+                try:  # see if note can be made w/ args
                     obj = name()
                 except TypeError:
                     continue

@@ -938,13 +938,13 @@ class LocalCorpus(Corpus):
 #     for corpusName in dir(virtual):
 #         className = getattr(virtual, corpusName)
 #         if callable(className):
-#             obj = className()
-#             if isinstance(obj, virtual.VirtualWork):  # @UndefinedVariable
-#                 if obj.corpusPath is not None:
-#                     _virtualWorks.append(obj)
+#             note = className()
+#             if isinstance(note, virtual.VirtualWork):  # @UndefinedVariable
+#                 if note.corpusPath is not None:
+#                     _virtualWorks.append(note)
 #     del corpusName
 #     del className
-#     del obj
+#     del note
 #     # PRIVATE PROPERTIES #
 #
 #     @property
@@ -973,10 +973,10 @@ class LocalCorpus(Corpus):
 #             expandExtensions=expandExtensions,
 #             )
 #         paths = []
-#         for obj in self._virtualWorks:
-#             if obj.corpusPath is not None:
+#         for note in self._virtualWorks:
+#             if note.corpusPath is not None:
 #                 for fileExtension in fileExtensions:
-#                     results = obj.getUrlByExt(fileExtension)
+#                     results = note.getUrlByExt(fileExtension)
 #                     for result in results:
 #                         if result not in paths:
 #                             paths.append(result)
@@ -1002,9 +1002,9 @@ class LocalCorpus(Corpus):
 #         '''
 #         if not common.isListLike(fileExtensions):
 #             fileExtensions = [fileExtensions]
-#         for obj in VirtualCorpus._virtualWorks:
-#             if obj.corpusPath is not None and workName.lower() in obj.corpusPath.lower():
-#                 return obj.getUrlByExt(fileExtensions)
+#         for note in VirtualCorpus._virtualWorks:
+#             if note.corpusPath is not None and workName.lower() in note.corpusPath.lower():
+#                 return note.getUrlByExt(fileExtensions)
 #         return []
 #
 #

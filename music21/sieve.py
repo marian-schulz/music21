@@ -1872,7 +1872,7 @@ class Sieve:
         return self.represent()
 
 # ------------------------------------------------------------------------------
-# high level utility obj
+# high level utility note
 
 
 class PitchSieve:

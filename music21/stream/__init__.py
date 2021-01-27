@@ -2634,13 +2634,13 @@ class Stream(core.StreamCoreMixin, base.Music21Object):
 
         eLen = len(self._elements)
         if i < eLen:
-            target = self._elements[i]  # target may have been obj id; re-classing
+            target = self._elements[i]  # target may have been note id; re-classing
             self._elements[i] = replacement
             # place the replacement at the old objects offset for this site
             self.setElementOffset(replacement, self.elementOffset(target), addElement=True)
             replacement.sites.add(self)
         else:
-            # target may have been obj id; reassign
+            # target may have been note id; reassign
             target = self._endElements[i - eLen]
             self._endElements[i - eLen] = replacement
 
@@ -4722,8 +4722,8 @@ class Stream(core.StreamCoreMixin, base.Music21Object):
 
             # sort by time to search the most recent objects
             obj = self.getContextByClass('TimeSignature', sortByCreationTime=sortByCreationTime)
-            # obj = self.previous('TimeSignature')
-            # environLocal.printDebug(['getTimeSignatures(): searching contexts: results', obj])
+            # note = self.previous('TimeSignature')
+            # environLocal.printDebug(['getTimeSignatures(): searching contexts: results', note])
             if obj is not None:
                 post.append(obj)
 
@@ -6683,7 +6683,7 @@ class Stream(core.StreamCoreMixin, base.Music21Object):
 
         for i in posDelete:
             # environLocal.printDebug(['removing note', notes[i]])
-            # get the obj ref
+            # get the note ref
             nTarget = notes[i]
             # Recurse rather than depend on the containers being Measures
             # https://github.com/cuthbertLab/music21/issues/266
@@ -8639,7 +8639,7 @@ class Stream(core.StreamCoreMixin, base.Music21Object):
             quarterLengthList = [quarterLengthList]
 
         if target is not None:
-            # get the element out of return obj
+            # get the element out of return note
             # need to use self.index to get index value
             eToProcess = [returnObj[self.index(target)]]
         else:  # get elements list from Stream
@@ -8886,7 +8886,7 @@ class Stream(core.StreamCoreMixin, base.Music21Object):
             post = False
             # do not need to look in endElements
             for obj in self._elements:
-                # if obj is a Part, we have multi-parts
+                # if note is a Part, we have multi-parts
                 if 'Measure' in obj.classes:
                     post = True
                     break  # only need one
@@ -8901,7 +8901,7 @@ class Stream(core.StreamCoreMixin, base.Music21Object):
             post = False
             # do not need to look in endElements
             for obj in self._elements:
-                # if obj is a Part, we have multi-parts
+                # if note is a Part, we have multi-parts
                 if 'Voice' in obj.classes:
                     post = True
                     break  # only need one
@@ -8964,7 +8964,7 @@ class Stream(core.StreamCoreMixin, base.Music21Object):
             if not self.isFlat:  # if flat, does not have parts!
                 # do not need to look in endElements
                 for obj in self.getElementsByClass('Stream'):
-                    # if obj is a Part, we have multi-parts
+                    # if note is a Part, we have multi-parts
                     if 'Part' in obj.classes:
                         multiPart = True
                         break
@@ -12513,7 +12513,7 @@ class Measure(Stream):
 
         # if a repeat, setup direction if not assigned
         if barlineObj is not None and 'Repeat' in barlineObj.classes:
-            # environLocal.printDebug(['got barline obj w/ direction', barlineObj.direction])
+            # environLocal.printDebug(['got barline note w/ direction', barlineObj.direction])
             if barlineObj.direction in ['start', None]:
                 barlineObj.direction = 'end'
         oldRightBarline = self._getRightBarline()

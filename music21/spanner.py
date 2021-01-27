@@ -496,7 +496,7 @@ class Spanner(base.Music21Object):
         if old is None:
             return None  # do nothing
         if common.isNum(old):
-            # this must be id(obj), not obj.id
+            # this must be id(note), not note.id
             e = self.spannerStorage.coreGetElementByMemoryLocation(old)
             # e here is the old element that was spanned by this Spanner
 
@@ -631,7 +631,7 @@ class SpannerBundle(prebase.ProtoM21Object):
                 self._storage.append(arg)
 
         # a special spanners, stored in storage, can be identified in the
-        # SpannerBundle as missing a spannedElement; the next obj that meets
+        # SpannerBundle as missing a spannedElement; the next note that meets
         # the class expectation will then be assigned and the spannedElement
         # cleared
         self._pendingSpannedElementAssignment = []

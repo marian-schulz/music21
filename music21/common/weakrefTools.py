@@ -52,8 +52,8 @@ def wrapWeakref(referent):
 def unwrapWeakref(referent):
     '''
     Utility function that gets an object that might be an object itself
-    or a weak reference to an object.  It returns obj() if it's a weakref.
-    and obj if it's not.
+    or a weak reference to an object.  It returns note() if it's a weakref.
+    and note if it's not.
 
 
     >>> class Mock:

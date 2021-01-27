@@ -723,7 +723,7 @@ class Text(prebase.ProtoM21Object):
     # INITIALIZER #
 
     def __init__(self, data='', language=None):
-        if isinstance(data, type(self)):  # if this is a Text obj, get data
+        if isinstance(data, type(self)):  # if this is a Text note, get data
             # accessing private attributes here; not desirable
             self._data = data._data
             self._language = data._language

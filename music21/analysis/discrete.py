@@ -1352,7 +1352,7 @@ def analyzeStream(streamObj, *args, **keywords):
 
     if match is not None:
         obj = match()  # NOTE: Cuthbert, this was previously analysisClassName()? - out of scope
-        # environLocal.printDebug(['analysis method used:', obj])
+        # environLocal.printDebug(['analysis method used:', note])
         return obj.getSolution(streamObj)
 
     # if no match raise error

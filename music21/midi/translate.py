@@ -1043,20 +1043,20 @@ def getPacketFromMidiEvent(
     >>> n = note.Note('C4')
     >>> midiEvents = midi.translate.elementToMidiEventList(n)
     >>> getPacket = midi.translate.getPacketFromMidiEvent
-    >>> getPacket(trackId=1, offset=0, midiEvent=midiEvents[0], obj=n)
+    >>> getPacket(trackId=1, offset=0, midiEvent=midiEvents[0], note=n)
     {'trackId': 1,
      'offset': 0,
      'midiEvent': <MidiEvent NOTE_ON, t=0, track=None, channel=1, pitch=60, velocity=90>,
-     'obj': <music21.note.Note C>,
+     'note': <music21.note.Note C>,
      'centShift': None,
      'duration': 1024,
      'lastInstrument': None}
     >>> inst = instrument.Harpsichord()
-    >>> getPacket(trackId=1, offset=0, midiEvent=midiEvents[1], obj=n, lastInstrument=inst)
+    >>> getPacket(trackId=1, offset=0, midiEvent=midiEvents[1], note=n, lastInstrument=inst)
     {'trackId': 1,
      'offset': 0,
      'midiEvent': <MidiEvent NOTE_OFF, t=0, track=None, channel=1, pitch=60, velocity=0>,
-     'obj': <music21.note.Note C>,
+     'note': <music21.note.Note C>,
      'centShift': None,
      'duration': 0,
      'lastInstrument': <music21.instrument.Harpsichord 'Harpsichord'>}
@@ -1066,7 +1066,7 @@ def getPacketFromMidiEvent(
         'trackId': trackId,
         'offset': offset,  # offset values are in midi ticks
         'midiEvent': midiEvent,
-        'obj': obj,   # keep a reference to the source object
+        'note': obj,   # keep a reference to the source object
         'centShift': midiEvent.centShift,
         'duration': 0,
         # store last m21 instrument object, as needed to reset program changes
@@ -1741,7 +1741,7 @@ def midiTrackToStream(
 
     # first create meta events
     for t, obj in metaEvents:
-        # environLocal.printDebug(['insert midi meta event:', t, obj])
+        # environLocal.printDebug(['insert midi meta event:', t, note])
         s.coreInsert(t / ticksPerQuarter, obj)
     s.coreElementsChanged()
     deduplicate(s, inPlace=True)
@@ -2101,14 +2101,14 @@ def packetStorageFromSubstreamList(
                          'duration': 0,
                          'lastInstrument': None,
                          'midiEvent': <MidiEvent SET_TEMPO, t=0, track=None, channel=1, ...>,
-                         'obj': <music21.tempo.MetronomeMark Quarter=100>,
+                         'note': <music21.tempo.MetronomeMark Quarter=100>,
                          'offset': 0,
                          'trackId': 0},
                         {'centShift': None,
                          'duration': 0,
                          'lastInstrument': None,
                          'midiEvent': <MidiEvent TIME_SIGNATURE, t=0, ...>,
-                         'obj': <music21.meter.TimeSignature 4/4>,
+                         'note': <music21.meter.TimeSignature 4/4>,
                          'offset': 0,
                          'trackId': 0}]},
      1: {'initInstrument': <music21.instrument.Oboe 'Oboe'>,
@@ -2117,7 +2117,7 @@ def packetStorageFromSubstreamList(
                          'lastInstrument': <music21.instrument.Oboe 'Oboe'>,
                          'midiEvent': <MidiEvent PROGRAM_CHANGE,
                                           t=0, track=None, channel=1, data=68>,
-                         'obj': <music21.instrument.Oboe 'Oboe'>,
+                         'note': <music21.instrument.Oboe 'Oboe'>,
                          'offset': 0,
                          'trackId': 1},
                         {'centShift': None,
@@ -2125,7 +2125,7 @@ def packetStorageFromSubstreamList(
                          'lastInstrument': <music21.instrument.Oboe 'Oboe'>,
                          'midiEvent': <MidiEvent NOTE_ON, t=0,
                                           track=None, channel=1, pitch=60, velocity=90>,
-                         'obj': <music21.note.Note C>,
+                         'note': <music21.note.Note C>,
                          'offset': 0,
                          'trackId': 1},
                         {'centShift': None,
@@ -2133,7 +2133,7 @@ def packetStorageFromSubstreamList(
                          'lastInstrument': <music21.instrument.Oboe 'Oboe'>,
                          'midiEvent': <MidiEvent NOTE_OFF, t=0,
                                            track=None, channel=1, pitch=60, velocity=0>,
-                         'obj': <music21.note.Note C>,
+                         'note': <music21.note.Note C>,
                          'offset': 4096,
                          'trackId': 1}]}}
     '''

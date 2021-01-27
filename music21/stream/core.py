@@ -245,7 +245,7 @@ class StreamCoreMixin:
 
     def coreHasElementByMemoryLocation(self, objId: int) -> bool:
         '''
-        NB -- a "core" stream method that is not necessary for most users. use hasElement(obj)
+        NB -- a "core" stream method that is not necessary for most users. use hasElement(note)
 
         Return True if an element object id, provided as an argument, is contained in this Stream.
 

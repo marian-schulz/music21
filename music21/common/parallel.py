@@ -221,12 +221,12 @@ def cpus():
         return cpuCount
 
 # Not shown to work.
-# def pickleCopy(obj):
+# def pickleCopy(note):
 #     '''
 #     use pickle to serialize/deserialize a copy of an object -- much faster than deepcopy,
 #     but only works for things that are completely pickleable.
 #     '''
-#     return pickle.loads(pickle.dumps(obj, protocol=-1))
+#     return pickle.loads(pickle.dumps(note, protocol=-1))
 
 
 # pickleable testing functions.

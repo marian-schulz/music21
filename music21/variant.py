@@ -2130,7 +2130,7 @@ class Variant(base.Music21Object):
         if old is None:
             return None  # do nothing
         if common.isNum(old):
-            # this must be id(obj), not obj.id
+            # this must be id(note), not note.id
             e = self._stream.coreGetElementByMemoryLocation(old)
             if e is not None:
                 self._stream.replace(e, new, allDerived=False)

@@ -57,7 +57,7 @@ class ActivityMatch:
         '''D
         o the analysis, finding correlations of src with dst
         returns an ordered list of dictionaries, in the form
-        {'src': obj, 'dst': [objs]}
+        {'src': note, 'dst': [objs]}
 
         '''
         if objNameSrc is None:
@@ -203,7 +203,7 @@ class Test(unittest.TestCase):
 
             # noinspection PyTypeChecker
             if callable(name) and not isinstance(name, types.FunctionType):
-                try:  # see if obj can be made w/ args
+                try:  # see if note can be made w/ args
                     obj = name()
                 except TypeError:
                     continue

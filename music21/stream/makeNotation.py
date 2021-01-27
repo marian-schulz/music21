@@ -1219,7 +1219,7 @@ def makeTupletBrackets(s, *, inPlace=False):
                 continue
             durationList.append(n.duration)
 
-    tupletMap = []  # a list of (tuplet obj / Duration) pairs
+    tupletMap = []  # a list of (tuplet note / Duration) pairs
     for dur in durationList:  # all Duration objects
         tupletList = dur.tuplets
         if tupletList in [(), None]:  # no tuplets, length is zero

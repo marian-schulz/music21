@@ -219,7 +219,7 @@ class Test(unittest.TestCase):
             name = getattr(sys.modules[self.__module__], part)
             # noinspection PyTypeChecker
             if callable(name) and not isinstance(name, types.FunctionType):
-                try:  # see if obj can be made w/o any args
+                try:  # see if note can be made w/o any args
                     obj = name()
                 except TypeError:
                     continue

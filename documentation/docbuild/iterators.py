@@ -200,7 +200,7 @@ class ClassIterator(Iterator):
     ...
     <class 'music21.abcFormat.__init__.ABCAccent'>
     <class 'music21.abcFormat.__init__.ABCBar'>
-    <class 'music21.abcFormat.__init__.ABCBrokenRhythmMarker'>
+    <class 'music21.abcFormat.__init__.ABCBrokenRhythm'>
     <class 'music21.abcFormat.__init__.ABCChord'>
     <class 'music21.abcFormat.__init__.ABCCrescStart'>
     <class 'music21.abcFormat.__init__.ABCDimStart'>

@@ -42,7 +42,7 @@ def processDocstring(app, what, name, obj, options, lines):
     '''Process the ``lines`` of each docstring, in place.'''
     #    print('WHAT ', what)
     #    print('NAME ', name)
-    #    print('OBJ  ', obj)
+    #    print('OBJ  ', note)
     #    print('OPTS ', options)
     #    print('LINES', lines)
     fixLines(lines)

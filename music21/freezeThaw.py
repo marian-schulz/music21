@@ -1072,11 +1072,11 @@ class Test(unittest.TestCase):
         for dummy in n1.sites.siteDict:
             pass
             # print(idKey)
-            # print(n1.sites.siteDict[idKey]['obj'])
+            # print(n1.sites.siteDict[idKey]['note'])
         for dummy in n2.sites.siteDict:
             pass
             # print(idKey)
-            # print(n2.sites.siteDict[idKey]['obj'])
+            # print(n2.sites.siteDict[idKey]['note'])
 
         dummy = pickle.dumps(c, protocol=-1)
         # data = sf.writeStr(fmt='pickle')

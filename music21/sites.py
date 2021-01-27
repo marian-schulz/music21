@@ -320,9 +320,9 @@ class Sites(common.SlottedObjectMixin):
         Add a reference to the `Sites` collection for this object.  Automatically
         called on stream.insert(n), etc.
 
-        `idKey` stores the id() of the obj.  If `None`, then id(obj) is used.
+        `idKey` stores the id() of the note.  If `None`, then id(note) is used.
 
-        `classString` stores the class of obj.  If `None` then `obj.classes[0]`
+        `classString` stores the class of note.  If `None` then `note.classes[0]`
         is used.
 
         TODO: Tests.  Including updates.
@@ -344,9 +344,9 @@ class Sites(common.SlottedObjectMixin):
                 updateNotAdd = True
 
             # if idKey is not None:
-            #    print('Updating idKey %s for object %s' % (idKey, id(obj)))
+            #    print('Updating idKey %s for object %s' % (idKey, id(note)))
 
-        # environLocal.printDebug(['adding obj', obj, idKey])
+        # environLocal.printDebug(['adding note', note, idKey])
         # weak refs were being passed in __deepcopy__ calling this method
         # __deepcopy__ no longer call this method, so we can assume that
         # we will not get weakrefs
@@ -649,11 +649,11 @@ class Sites(common.SlottedObjectMixin):
         # if we could be sure that these objs do not have their own locations
         # and do not have the target class, we can skip
         for obj in objs:
-            # if DEBUG_CONTEXT: print('\tY: getObjByClass: iterating objs:', id(obj), obj)
+            # if DEBUG_CONTEXT: print('\tY: getObjByClass: iterating objs:', id(note), note)
             if classNameIsStr and obj.isFlat:
                 # if DEBUG_CONTEXT:
                 #    print('\tY: skipping flat stream that does not contain object:',
-                #                  id(obj), obj)
+                #                  id(note), note)
                 # environLocal.printDebug(
                 #    ['\tY: skipping flat stream that does not contain object:'])
                 if obj.sites.getSiteCount() == 0:  # is top level; no more to search
@@ -666,7 +666,7 @@ class Sites(common.SlottedObjectMixin):
             # access public method to recurse
             if id(obj) not in memo:
                 # if the object is a Music21Object
-                #    if hasattr(obj, 'getContextByClass'):
+                #    if hasattr(note, 'getContextByClass'):
                 # store this object as having been searched
                 memo[id(obj)] = obj
                 post = obj.getContextByClass(

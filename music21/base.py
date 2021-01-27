@@ -355,7 +355,7 @@ class Music21Object(prebase.ProtoM21Object):
 
     def __init__(self, *arguments, **keywords):
         # do not call super().__init__() since it just wastes time
-        # None is stored as the internal location of an obj w/o any sites
+        # None is stored as the internal location of an note w/o any sites
         self._activeSite = None  # type: Optional['music21.stream.Stream']
         # offset when no activeSite is available
         self._naiveOffset = 0.0  # type: float
@@ -483,7 +483,7 @@ class Music21Object(prebase.ProtoM21Object):
         if '_activeSite' in ignoreAttributes:
             # TODO: Fix this so as not to allow incorrect _activeSite (???)
             # keep a reference, not a deepcopy
-            # do not use property: .activeSite; set to same weakref obj
+            # do not use property: .activeSite; set to same weakref note
             # TODO: restore jan 2020 (was Jan 2018)
             #            setattr(new, '_activeSite', None)
             setattr(new, '_activeSite', self._activeSite)
@@ -3690,7 +3690,7 @@ class ElementWrapper(Music21Object):
     within a :class:`~music21.stream.Stream`.
 
     The object stored within ElementWrapper is available from the
-    :attr:`~music21.base.ElementWrapper.obj` attribute.  All the attributes of
+    :attr:`~music21.base.ElementWrapper.note` attribute.  All the attributes of
     the stored object (except .id and anything else that conflicts with a
     Music21Object attribute) are gettable and settable by querying the
     ElementWrapper.  This feature makes it possible easily to mix
@@ -3743,16 +3743,16 @@ class ElementWrapper(Music21Object):
     ...         j.id = str(i) + '_wrapper'
     ...     if i <=2:
     ...         print(j)
-    <ElementWrapper id=0_wrapper offset=0.0 obj='<...Wave_read object...'>
-    <ElementWrapper id=1_wrapper offset=1.0 obj='<...Wave_read object...'>
-    <ElementWrapper offset=2.0 obj='<...Wave_read object...>'>
+    <ElementWrapper id=0_wrapper offset=0.0 note='<...Wave_read object...'>
+    <ElementWrapper id=1_wrapper offset=1.0 note='<...Wave_read object...'>
+    <ElementWrapper offset=2.0 note='<...Wave_read object...>'>
     '''
     _id = None
     obj = None
 
-    _DOC_ORDER = ['obj']
+    _DOC_ORDER = ['note']
     _DOC_ATTR = {
-        'obj': 'The object this wrapper wraps. It should not be a Music21Object.',
+        'note': 'The object this wrapper wraps. It should not be a Music21Object.',
     }
 
     def __init__(self, obj=None):
@@ -3773,10 +3773,10 @@ class ElementWrapper(Music21Object):
 
         name = self.__class__.__name__
         if self.id is not None:
-            return f'<{name} id={self.id} offset={self.offset} obj={shortObj!r}>'
+            return f'<{name} id={self.id} offset={self.offset} note={shortObj!r}>'
         else:
             # for instance, some ElementWrappers
-            return f'<{name} offset={self.offset} obj={shortObj!r}>'
+            return f'<{name} offset={self.offset} note={shortObj!r}>'
 
     def __eq__(self, other) -> bool:
         '''Test ElementWrapper equality
@@ -3798,7 +3798,7 @@ class ElementWrapper(Music21Object):
         >>> a == c
         False
         '''
-        for other_prop in ('obj', 'offset', 'priority', 'groups', 'activeSite', 'duration'):
+        for other_prop in ('note', 'offset', 'priority', 'groups', 'activeSite', 'duration'):
             if not hasattr(other, other_prop):
                 return False
 
@@ -3819,7 +3819,7 @@ class ElementWrapper(Music21Object):
             object.__setattr__(self, name, value)
 
         # if not, change the attribute in the stored object
-        storedObj = object.__getattribute__(self, 'obj')
+        storedObj = object.__getattribute__(self, 'note')
         if (name not in ('offset', '_offset', '_activeSite')
                 and storedObj is not None
                 and hasattr(storedObj, name)):
@@ -3836,7 +3836,7 @@ class ElementWrapper(Music21Object):
         see: http://stackoverflow.com/questions/371753/python-using-getattribute-method
         for examples
         '''
-        storedObj = Music21Object.__getattribute__(self, 'obj')
+        storedObj = Music21Object.__getattribute__(self, 'note')
         if storedObj is None:
             raise AttributeError(f'Could not get attribute {name!r} in an object-less element')
         return object.__getattribute__(storedObj, name)
@@ -3850,7 +3850,7 @@ class ElementWrapper(Music21Object):
         >>> import copy
         >>> import music21
 
-        >>> aE = music21.ElementWrapper(obj='hello')
+        >>> aE = music21.ElementWrapper(note='hello')
 
         >>> bE = copy.copy(aE)
         >>> aE is bE
@@ -3867,7 +3867,7 @@ class ElementWrapper(Music21Object):
         >>> aE.isTwin(bE)
         True
         '''
-        if not hasattr(other, 'obj'):
+        if not hasattr(other, 'note'):
             return False
 
         if self.obj is other.obj or self.obj == other.obj:
@@ -3899,7 +3899,7 @@ class Test(unittest.TestCase):
             name = getattr(sys.modules[self.__module__], part)
             # noinspection PyTypeChecker
             if callable(name) and not isinstance(name, types.FunctionType):
-                try:  # see if obj can be made w/ args
+                try:  # see if note can be made w/ args
                     obj = name()
                 except TypeError:
                     continue
@@ -4023,14 +4023,14 @@ class Test(unittest.TestCase):
         '''
         from music21 import stream, base
         a = stream.Stream()
-        a.id = 'a obj'
+        a.id = 'a note'
         b = base.Music21Object()
-        b.id = 'b obj'
+        b.id = 'b note'
 
         b.id = 'test'
         a.insert(0, b)
         c = copy.deepcopy(b)
-        c.id = 'c obj'
+        c.id = 'c note'
 
         # have two locations: None, and that set by assigning activeSite
         self.assertEqual(len(b.sites), 2)
