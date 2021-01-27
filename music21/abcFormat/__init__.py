@@ -47,7 +47,7 @@ __all__ = [
     'ABCMetadata', 'ABCBar', 'ABCTuplet', 'ABCTie',
     'ABCSlurStart', 'ABCParenStop', 'ABCCrescStart', 'ABCDimStart',
     'ABCStaccato', 'ABCUpbow', 'ABCDownbow', 'ABCAccent', 'ABCStraccent',
-    'ABCTenuto', 'ABCGraceStart', 'ABCGraceStop', 'ABCBrokenRhythmMarker',
+    'ABCTenuto', 'ABCGraceStart', 'ABCGraceStop', 'ABCBrokenRhythm',
     'ABCNote', 'ABCChord',
     'ABCHandler', 'ABCHandlerBar',
     'mergeLeadingMetaData',
@@ -73,23 +73,22 @@ environLocal = environment.Environment('abcFormat')
 # see http://abcnotation.com/abc2mtex/abc.txt
 
 # store symbol and m21 naming/class eq
-ABC_BARS = [
-    (':|1', 'light-heavy-repeat-end-first'),
-    (':|2', 'light-heavy-repeat-end-second'),
-    ('|]', 'light-heavy'),
-    ('||', 'light-light'),
-    ('[|', 'heavy-light'),
-    ('[1', 'regular-first'),  # preferred format
-    ('[2', 'regular-second'),
-    ('|1', 'regular-first'),  # gets converted
-    ('|2', 'regular-second'),
-    (':|', 'light-heavy-repeat-end'),
-    ('|:', 'heavy-light-repeat-start'),
-    ('::', 'heavy-heavy-repeat-bidirectional'),
-    # for comparison, single chars must go last
-    ('|', 'regular'),
-    (':', 'dotted'),
-]
+ABC_BARS = {
+    ':|1': 'light-heavy-repeat-end-first',
+    ':|2': 'light-heavy-repeat-end-second',
+    '|]': 'light-heavy',
+    '||': 'light-light',
+    '[|': 'heavy-light',
+    '[1': 'regular-first',  # preferred format
+    '[2': 'regular-second',
+    '|1': 'regular-first',  # gets converted
+    '|2': 'regular-second',
+    ':|': 'light-heavy-repeat-end',
+    '|:': 'heavy-light-repeat-start',
+    '::': 'heavy-heavy-repeat-bidirectional',
+    '|': 'regular',
+    ':': 'dotted',
+}
 
 # store a mapping of ABC representation to pitch values
 _pitchTranslationCache = {}
@@ -141,33 +140,28 @@ class ABCToken(prebase.ProtoM21Object):
     def m21Object(self):
         return None
 
-
-class ABCExpressionMarker(ABCToken):
+class ABCMark(ABCToken):
     '''
-    Base class of abc score expression marker token
+    Base class of abc score marker token
+    Marker can placed on every position in a stream.
     '''
-
-    def __init__(self, src=''):
-        super().__init__(src)
-
-    def m21Object(self):
-        pass
-
+    match = None
 
 class ABCArticulation(ABCToken):
     '''
-    Base class of abc note articulation token
+    Baseclass of articulation tokens.
+    ABCArticulations precede a note or chord,
+    they are a property of that note/chord.
     '''
 
     def __init__(self, src=''):
         super().__init__(src)
 
-    @property
-    def m21Object(self):
+    def m21Object(self) -> 'musci21.articulations.Articulation':
         return None
 
 
-class ABCExpressions(ABCToken):
+class ABCExpression(ABCToken)  :
     '''
     Base class of abc note expresssion token
     '''
@@ -175,7 +169,7 @@ class ABCExpressions(ABCToken):
     def __init__(self, src=''):
         super().__init__(src)
 
-    def m21Object(self) -> expressions.Expression:
+    def m21Object(self) -> 'musci21.expressions.Expression':
         return None
 
 
@@ -907,20 +901,9 @@ class ABCMetadata(ABCToken):
 
 
 class ABCBar(ABCToken):
-    # given a logical unit, create an object
-    # may be a chord, notes, metadata, bars
-    def __init__(self, src):
-        super().__init__(src)
-        self.barType = None  # repeat or barline
-        self.barStyle = None  # regular, heavy-light, etc
-        self.repeatForm = None  # end, start, bidrectional, first, second
-
-    def parse(self):
+    def __init__(self, src: str):
         '''
-        Assign the bar-type based on the source string.
-
         >>> ab = abcFormat.ABCBar('|')
-        >>> ab.parse()
         >>> ab
         <music21.abcFormat.ABCBar '|'>
 
@@ -930,108 +913,106 @@ class ABCBar(ABCToken):
         'regular'
 
         >>> ab = abcFormat.ABCBar('||')
-        >>> ab.parse()
         >>> ab.barType
         'barline'
         >>> ab.barStyle
         'light-light'
 
         >>> ab = abcFormat.ABCBar('|:')
-        >>> ab.parse()
         >>> ab.barType
         'repeat'
         >>> ab.barStyle
         'heavy-light'
         >>> ab.repeatForm
         'start'
+
+        >>> ab = abcFormat.ABCBar('[2')
+        >>> ab.isRepeat
+        False
+        >>> ab.isRepeatBracket
+        2
         '''
-        for abcStr, barTypeString in ABC_BARS:
-            if abcStr == self.src.strip():
-                # this gets lists of elements like
-                # light-heavy-repeat-end
-                barTypeComponents = barTypeString.split('-')
-                # this is a list of attributes
-                if 'repeat' in barTypeComponents:
-                    self.barType = 'repeat'
-                elif ('first' in barTypeComponents
-                      or 'second' in barTypeComponents):
-                    self.barType = 'barline'
-                    # environLocal.printDebug(['got repeat 1/2:', self.src])
-                else:
-                    self.barType = 'barline'
-
-                # case of regular, dotted
-                if len(barTypeComponents) == 1:
-                    self.barStyle = barTypeComponents[0]
-
-                # case of light-heavy, light-light, etc
-                elif len(barTypeComponents) >= 2:
-                    # must get out cases of the start-tags for repeat boundaries
-                    # not yet handling
-                    if 'first' in barTypeComponents:
-                        self.barStyle = 'regular'
-                        self.repeatForm = 'first'  # not a repeat
-                    elif 'second' in barTypeComponents:
-                        self.barStyle = 'regular'
-                        self.repeatForm = 'second'  # not a repeat
-                    else:
-                        self.barStyle = barTypeComponents[0] + '-' + barTypeComponents[1]
+        super().__init__(src.strip())
+        barTypeComponents = ABC_BARS.get(self.src,'').split('-')
+        self.barType = 'repeat' if 'repeat' in barTypeComponents else 'barline'
+        if len(barTypeComponents) == 1:
+            self.barStyle = barTypeComponents[0]
+        else:
+            # case of light-heavy, light-light, etc
+            # must get out cases of the start-tags for repeat boundaries
+            # not yet handling
+            if 'first' in barTypeComponents:
+                self.barStyle = 'regular'
+                self.repeatForm = 'first'  # not a repeat
+            elif 'second' in barTypeComponents:
+                self.barStyle = 'regular'
+                self.repeatForm = 'second'  # not a repeat
+            else:
+                self.barStyle = barTypeComponents[0] + '-' + barTypeComponents[1]
                 # repeat form is either start/end for normal repeats
                 # get extra repeat information; start, end, first, second
                 if len(barTypeComponents) > 2:
                     self.repeatForm = barTypeComponents[3]
 
-    def isRepeat(self):
-        if self.barType == 'repeat':
-            return True
-        else:
-            return False
+    @classmethod
+    def barlineTokenFilter(cls, token: str) -> List['ABCBar']:
+        '''
+        Some single barline tokens are better replaced
+        with two tokens. This method, given a token,
+        returns a list of tokens. If there is no change
+        necessary, the provided token will be returned in the list.
 
+        A classmethod  Call on the class itself.
+
+        >>> abcFormat.ABCBar.barlineTokenFilter('::')
+        [<music21.abcFormat.ABCBar ':|'>, <music21.abcFormat.ABCBar '|:'>]
+
+        >>> abcFormat.ABCBar.barlineTokenFilter('|2')
+        [<music21.abcFormat.ABCBar '|'>, <music21.abcFormat.ABCBar '[2'>]
+
+        >>> abcFormat.ABCBar.barlineTokenFilter(':|1')
+        [<music21.abcFormat.ABCBar ':|'>, <music21.abcFormat.ABCBar '[1'>]
+
+        If nothing matches, the original token is returned as an ABCBar object:
+
+        >>> abcFormat.ABCBar.barlineTokenFilter('hi')
+        [<music21.abcFormat.ABCBar 'hi'>]
+        '''
+        return {
+            '::': [cls(':|'), cls('|:')],
+            '|1': [cls('|'), cls('[1')],
+            '|2': [cls('|'), cls('[2')],
+            ':|1': [cls(':|'), cls('[1')],
+            ':|2': [cls(':|'), cls('[2')]
+        }.get(token, [cls(token)])
+
+    @property
+    def isRepeat(self) -> bool:
+        '''Is a repeat bar'''
+        return self.barType == 'repeat'
+
+    @property
     def isRegular(self) -> bool:
-        '''
-        Return True if this is a regular, single, light bar line.
+        '''Is a regular bar'''
+        return self.barType != 'repeat' and self.barStyle == 'regular'
 
-        >>> ab = abcFormat.ABCBar('|')
-        >>> ab.parse()
-        >>> ab.isRegular()
-        True
-        '''
-        if self.barType != 'repeat' and self.barStyle == 'regular':
-            return True
-        else:
-            return False
-
+    @property
     def isRepeatBracket(self) -> Union[int, bool]:
-        '''
-        Return a number if this defines a repeat bracket for an alternate ending
-        otherwise returns False.
+        return {'first': 1, 'second': 2}.get(self.repeatForm, False)
 
-        >>> ab = abcFormat.ABCBar('[2')
-        >>> ab.parse()
-        >>> ab.isRepeat()
-        False
-        >>> ab.isRepeatBracket()
-        2
-        '''
-        if self.repeatForm == 'first':
-            return 1  # we need a number
-        elif self.repeatForm == 'second':
-            return 2
-        else:
-            return False
+    def ms21Object(self) -> Optional['music21.bar.Barline']:
+        ''' create a music21 barline object
 
-    def getBarObject(self) -> Optional['music21.bar.Barline']:
-        '''
-        Return a music21 bar object
+        Returns:
+            A music21 bar object
 
         >>> ab = abcFormat.ABCBar('|:')
-        >>> ab.parse()
-        >>> barObject = ab.getBarObject()
+        >>> barObject = ab.ms21Object()
         >>> barObject
          <music21.bar.Repeat direction=start>
         '''
         from music21 import bar
-        if self.isRepeat():
+        if self.isRepeat:
             if self.repeatForm in ('end', 'start'):
                 m21bar = bar.Repeat(direction=self.repeatForm)
             # bidirectional repeat tokens should already have been replaced
@@ -1076,10 +1057,10 @@ class ABCTuplet(ABCToken):
         # store an m21 tuplet object
         self._m21Object = None
 
-    def m21Object(self):
+    def m21Object(self) -> Optional['musci21.duration.Tuplet']:
         return self._m21Object
 
-    def updateRatio(self, keySignatureObj=None):
+    def updateRatio(self, keySig: 'music21.key.KeySignature'=None):
         # noinspection PyShadowingNames
         '''
         Cannot be called until local meter context
@@ -1128,7 +1109,6 @@ class ABCTuplet(ABCToken):
         >>> at.numberNotesActual, at.numberNotesNormal
         (2, 3)
 
-
         Some other types:
 
         >>> for n in 1, 2, 3, 4, 5, 6, 7, 8, 9:
@@ -1152,47 +1132,27 @@ class ABCTuplet(ABCToken):
         Traceback (most recent call last):
         music21.abcFormat.ABCTokenException: cannot handle tuplet of form: '(10'
         '''
-        if keySignatureObj is None:
+        if keySig is None or keySig.beatDivisionCount != 3:
             normalSwitch = 2  # 4/4
-        elif keySignatureObj.beatDivisionCount == 3:  # if compound
+        else:  # if compound
             normalSwitch = 3
-        else:
-            normalSwitch = 2
 
         splitTuplet = self.src.strip().split(':')
+        tupletNumber = int(splitTuplet[0][1:])
 
-        tupletNumber = splitTuplet[0]
-        normalNotes = None
-
-        if len(splitTuplet) >= 2 and splitTuplet[1] != '':
-            normalNotes = int(splitTuplet[1])
-
-        if tupletNumber == '(1':  # not sure if valid, but found
-            a, n = 1, 1
-        elif tupletNumber == '(2':
-            a, n = 2, 3  # actual, normal
-        elif tupletNumber == '(3':
-            a, n = 3, 2  # actual, normal
-        elif tupletNumber == '(4':
-            a, n = 4, 3  # actual, normal
-        elif tupletNumber == '(5':
-            a, n = 5, normalSwitch  # actual, normal
-        elif tupletNumber == '(6':
-            a, n = 6, 2  # actual, normal
-        elif tupletNumber == '(7':
-            a, n = 7, normalSwitch  # actual, normal
-        elif tupletNumber == '(8':
-            a, n = 8, 3  # actual, normal
-        elif tupletNumber == '(9':
-            a, n = 9, normalSwitch  # actual, normal
+        if 1 <= tupletNumber <= 9:
+            if len(splitTuplet) >= 2 and splitTuplet[1]:
+                self.numberNotesNormal = int(splitTuplet[1])
+            else:
+                self.numberNotesNormal = {1: 1,
+                                          2: 3,
+                                          4: 3,
+                                          6: 2,
+                                          8: 3}.get(tupletNumber, normalSwitch)
+            self.numberNotesActual = tupletNumber
         else:
-            raise ABCTokenException(f'cannot handle tuplet of form: {tupletNumber!r}')
+            raise ABCTokenException(f"cannot handle tuplet of form: '({tupletNumber!r}'")
 
-        if normalNotes is None:
-            normalNotes = n
-
-        self.numberNotesActual = a
-        self.numberNotesNormal = normalNotes
 
     def updateNoteCount(self):
         '''
@@ -1233,7 +1193,7 @@ class ABCTuplet(ABCToken):
 
         # copy value; this will be dynamically counted down
         splitTuplet = self.src.strip().split(':')
-        if len(splitTuplet) >= 3 and splitTuplet[2] != '':
+        if len(splitTuplet) >= 3 and splitTuplet[2]:
             self.noteCount = int(splitTuplet[2])
         else:
             self.noteCount = self.numberNotesActual
@@ -1248,6 +1208,12 @@ class ABCSpanner(ABCToken):
     def m21Object(self):
         return None
 
+class ABCDynamic(ABCMark):
+    match = r'![p]{1,4}!|![f]{1,4}!|!m[pf]!|!sfz!'
+
+    def m21Object(self):
+        from music21.dynamics import Dynamic
+        return dynamics.Dynamic(self.src)
 
 class ABCTie(ABCToken):
     '''
@@ -1258,7 +1224,7 @@ class ABCTie(ABCToken):
 
     def __init__(self, src):
         super().__init__(src)
-        self.noteObj = None
+        #self.noteObj: ABCNote = None
 
 
 class ABCSlurStart(ABCSpanner):
@@ -1285,14 +1251,19 @@ class ABCParenStop(ABCToken):
 class ABCCrescStart(ABCSpanner):
     '''
     ABCCrescStart tokens always precede the notes in a crescendo.
-    These tokens coincide with the string "!crescendo(";
     the closing string "!crescendo)" counts as an ABCParenStop.
     '''
 
-    def __init__(self, src):
+    def __init__(self, src: str):
         super().__init__(src)
 
     def m21Object(self) -> 'music21.dynamics.Crescendo':
+        '''
+        Create a music21 cressendo (dynamics)
+
+        Returns:
+             a music21 Cressendo object
+        '''
         from music21.dynamics import Crescendo
         return Crescendo()
 
@@ -1300,20 +1271,25 @@ class ABCCrescStart(ABCSpanner):
 class ABCDimStart(ABCSpanner):
     '''
     ABCDimStart tokens always precede the notes in a diminuendo.
-    They function identically to ABCCrescStart tokens.
     '''
 
-    def __init__(self, src):  # previous typo?: used to be __init
+    def __init__(self, src: str):
         super().__init__(src)
 
     def m21Object(self) -> 'music21.dynamics.Diminuendo':
+        '''
+        Create a musci21 diminuendo (dynamics)
+
+        Returns:
+             a music21 Diminuendo object
+        '''
         from music21.dynamics import Diminuendo
         return Diminuendo()
 
 
 class ABCStaccato(ABCArticulation):
     '''
-    ABCStaccato tokens "." precede a note or chord;
+    ABCStaccato tokens precede a note or chord.
     they are a property of that note/chord.
     '''
 
@@ -1324,7 +1300,7 @@ class ABCStaccato(ABCArticulation):
 
 class ABCUpbow(ABCArticulation):
     '''
-    ABCStaccato tokens "." precede a note or chord;
+    ABCUpbow tokens precede a note or chord;
     they are a property of that note/chord.
     '''
 
@@ -1335,7 +1311,7 @@ class ABCUpbow(ABCArticulation):
 
 class ABCDownbow(ABCArticulation):
     '''
-    ABCStaccato tokens "." precede a note or chord;
+    ABCDowmbow tokens precede a note or chord;
     they are a property of that note/chord.
     '''
 
@@ -1390,7 +1366,7 @@ class ABCGraceStop(ABCToken):
     '''
 
 
-class ABCTrill(ABCExpressions):
+class ABCTrill(ABCExpression):
     '''
     Trill
     '''
@@ -1406,16 +1382,16 @@ class ABCRoll(ABCToken):
     pass
 
 
-class ABCFermata(ABCExpressions):
+class ABCFermata(ABCExpression):
     '''
-    Fermata
+    Fermata expression
     '''
 
     def m21Object(self) -> expressions.Fermata:
         return expressions.Fermata()
 
 
-class ABCLowerMordent(ABCExpressions):
+class ABCLowerMordent(ABCExpression):
     '''
     Lower mordent is a single rapid alternation with
     the note below
@@ -1427,7 +1403,7 @@ class ABCLowerMordent(ABCExpressions):
         return mordent
 
 
-class ABCUpperMordent(ABCExpressions):
+class ABCUpperMordent(ABCExpression):
     '''
     Upper mordent is a single rapid alternation with
     the note above
@@ -1439,20 +1415,24 @@ class ABCUpperMordent(ABCExpressions):
         return mordent
 
 
-class ABCCoda(ABCExpressionMarker):
+class ABCCoda(ABCMark):
     '''
-    Coda
+    Coda score expression marker
     '''
+    # token matched by this regular expression
+    match = r'!coda!'
 
     def m21Object(self) -> 'music21.repeat.Coda':
         from music21 import repeat
         return repeat.Coda()
 
 
-class ABCSegno(ABCExpressionMarker):
+class ABCSegno(ABCMark):
     '''
-    Segno
+    Segno score expressiion marker
     '''
+    # token matched by this regular expression
+    match = r'!segno!'
 
     def m21Object(self) -> 'music21.repeat.Segno':
         """
@@ -1463,9 +1443,15 @@ class ABCSegno(ABCExpressionMarker):
         return repeat.Segno()
 
 
-class ABCBrokenRhythmMarker(ABCToken):
+class ABCBrokenRhythm(ABCToken):
     '''
-    Marks that rhythm is broken with '>>>'
+    Brokenrhythm is binary operator for two chord or note token to the
+    left and right hand side of the BrokenRythm.
+    It decreases the length of one note by a factor and increases the length of
+    the second note by the inverse of the factor.
+
+    Assign the two notes with set_notes, the brokenRythmModifier property of the
+    note/chord is set.
     '''
 
     def __init__(self, src: str):
@@ -1479,8 +1465,9 @@ class ABCBrokenRhythmMarker(ABCToken):
     def set_notes(self, left: 'ABCGeneralNote', right: 'ABCGeneralNote'):
         '''
         Set note the length modifier of the the BrokenRythm to the left
-        and right node
-        arguments:
+        and right node.
+
+        Arguments:
             left:
                 Note token to the left of the BrokenRythmMarker
             right:
@@ -1490,11 +1477,11 @@ class ABCBrokenRhythmMarker(ABCToken):
         right.brokenRyhtmModifier = self.right
 
 
-class ABCChordSymbol(ABCToken):
+class ABCChordSymbol(ABCMark):
     '''
-    Grace note end
+    A chord symbol
     '''
-
+    match = r'"[^"]*"'
     def __init__(self, src):
         src = src[1:-1].strip()
         src = re.sub('[()]', '', src)
@@ -1521,12 +1508,8 @@ class ABCGeneralNote(ABCToken):
     each ABCNote needs a number of attributes updates. Attributes to
     be updated after tokenizing, and based on the linear sequence of
     tokens: `inBar`, `inBeam` (not used), `inGrace`,
-    `activeDefaultQuarterLength`, `brokenRhythmMarker`, and
-    `activeKeySignature`.
-
-    The `chordSymbols` list stores one or more chord symbols (ABC calls
-    these guitar chords) associated with this note. This attribute is
-    updated when parse() is called.
+    `activeDefaultQuarterLength`, `brokenRhythmMarker`, 'articulations'
+    'expressions' and `activeKeySignature`.
     '''
 
     def __init__(self, src, length: Optional[str]=None,
@@ -1538,10 +1521,10 @@ class ABCGeneralNote(ABCToken):
                  token string of an abc note
             length:
                  length string of the abc note
-             defaultQuarterLength:
+            defaultQuarterLength:
                  default length of an note an note with qan quarter note is 1.0
                  (default value is according ABC standart 0.5 = 1/8)
-             keySignature:
+            keySignature:
                 the active key signature
         """
         super().__init__(src)
@@ -1554,7 +1537,7 @@ class ABCGeneralNote(ABCToken):
 
         # context attributes
         self.inBar = None
-        self.inBeam = None
+        self.inBeam = None      # @TODO: not implemented yet
         self.inGrace = None
 
         # store a tuplet if active
@@ -1566,9 +1549,10 @@ class ABCGeneralNote(ABCToken):
         # store a tie if active
         self.tie = None
 
-        # store articulations if active
-        # @TODO: Remove this, the Chord doesn't need it but his notes
-        self.articulations = []
+        # store ABCArticulation
+        self.articulations: List[ABCArticulation]  = []
+        # store ABCExpression
+        self.expressions: List[ABCExpression] = []
 
         # provide default duration from handler; may change during piece
         # @TODO: Remove this, the Chord doesn't need it but his notes
@@ -1585,22 +1569,16 @@ class ABCGeneralNote(ABCToken):
 
     @classmethod
     def _parse_length(self, src: str) -> float:
-        """
-        ABCGeneralNote._parse_length('1')
-        1.0
-        ABCGeneralNote._parse_length('2/3')
-        1.5
-        ABCGeneralNote._parse_length('/')
-        0.5
-        ABCGeneralNote._parse_length('//')
-        0.25
-        ABCGeneralNote._parse_length('/2')
-        0.5
-        ABCGeneralNote._parse_length('3/')
-        1.5
-        """
-        # numStr, _ = common.getNumFromStr(src, '0123456789/')
-        # Base length
+        '''
+        Parse a abc length string.
+
+        argument:
+            src:
+                abc note/chord length string
+                the function expects only numbers and the slash ('/') to be passed to it.
+        return:
+                length modifier als float.
+        '''
         if src is None:
             return 1.0
         if src == '/':
@@ -1612,11 +1590,13 @@ class ABCGeneralNote(ABCToken):
         else:
             try:
                 if src.startswith('/'):
+                    # common usage: /4 short for 1/4
                     n, d = 1, int(src.lstrip('/'))
-                # uncommon usage: 3/ short for 3/2
                 elif src.endswith('/'):
+                    # uncommon usage: 3/ short for 3/2
                     n, d = int(src.strip().rstrip('/')), 2
                 elif '/' in src:
+                    # common usage: 3/4
                     n, d = src.split('/')
                     n, d = int(n.strip()), int(d.strip())
                 else:
@@ -1630,6 +1610,14 @@ class ABCGeneralNote(ABCToken):
 
     def quarterLength(self, defaultQuarterLength: Optional[float]=None):
         """
+        Returns the length of this note/chort relative to a quarter note.
+        Arguments:
+            defaultQuarterLength:
+                Optionally, a different DefaultQuarterLength can be specified.
+                The quarter note length of the object is not replaced.
+        Returns:
+            The relative length of this
+
         >>> abcFormat.ABCNote('=c/2', defaultQuarterLength=0.5).quarterLength()
         0.25
 
@@ -1648,9 +1636,6 @@ class ABCGeneralNote(ABCToken):
         >>> abcFormat.ABCNote('A///').quarterLength()
         0.0625
         """
-        # <lengthModifier>: modifier providet by the abc length syntax
-        # <brokenRyhtm>: a BrokenRythm modifier
-        # <activeDefaultQuarterLength>: default length providet by abc default_note_length (L:)
         if defaultQuarterLength is None:
             defaultQuarterLength = self.activeDefaultQuarterLength
         return self.lengthModifier * self.brokenRyhtmModifier * defaultQuarterLength
@@ -1658,42 +1643,69 @@ class ABCGeneralNote(ABCToken):
     def m21Object(self):
         """
         return:
-            music21 object corresponding to the token
+            music21 object corresponding to the token.
+            Needs implementation of the subclasses
         """
-        return  one
+        return None
 
-    def apply_expressions(self, obj: 'music21.note.GeneralNote'):
-        pass
+    def apply_expressions(self, note: 'music21.note.GeneralNote'):
+        """Add collected expressions to a node/chord object.
 
-    def apply_spanners(self, obj):
-        for span in self.applicableSpanners:
-            span.addSpannedElements(obj)
-
-    def apply_context(self, obj: 'music21.note.GeneralNote'):
-        self.apply_articulations(obj)
-        self.apply_expressions(obj)
-        self.apply_spanners(obj)
-        # Apply Grace
-        if self.inGrace:
-            obj = obj.getGrace()
-
-    def apply_articulations(self, n: 'music21.note.GeneralNote'):
-        for a in self.articulations:
+        Arguments:
+          note:
+            Append expressions to this music21 note/chord object
+        """
+        for e in self.expressions:
             try:
-                obj = a.m21Object()
+                m21obj = e.m21Object()
                 if obj:
-                    n.articulations.append(obj)
+                    note.articulations.append(m21obj)
             except:
                 environLocal.printDebug(
                     [f'Create music21 articulation object for Token: "{a.__class__.name}" failed.']
                 )
 
-    def apply_tuplet(self, n: 'music21.note.GeneralNote'):
+    def apply_spanners(self, obj: 'music21.note.GeneralNote'):
+        """
+        Add collected spanner to a node/chord object.
+        Arguments:
+          obj:
+            Add spanner to this music21 Note/Chord Object
+        """
+        for span in self.applicableSpanners:
+            span.addSpannedElements(obj)
+
+    def apply_articulations(self, note: 'music21.note.GeneralNote'):
+        """
+        Apply collected articulations to a musci21 node/chord
+
+        Arguments:
+          note:
+            Apply articulations to this music21 note/chord object
+        """
+        for a in self.articulations:
+            try:
+                m21obj = a.m21Object()
+                if obj:
+                    note.articulations.append(m21obj)
+            except:
+                environLocal.printDebug(
+                    [f'Create music21 articulation object for Token: "{a.__class__.name}" failed.']
+                )
+
+    def apply_tuplet(self, note: 'music21.note.GeneralNote'):
+        """
+        Apply active tuplet to a mucic21 node/chord
+
+        Arguments:
+          note:
+            Apply active tuplet to this music21 note/chord object
+        """
         if self.activeTuplet:
             thisTuplet = copy.deepcopy(self.activeTuplet)
             if thisTuplet.durationNormal is None:
-                thisTuplet.setDurationType(n.duration.type, n.duration.dots)
-            n.duration.appendTuplet(thisTuplet)
+                thisTuplet.setDurationType(n.duration.type, note.duration.dots)
+            note.duration.appendTuplet(thisTuplet)
 
 
 class ABCNote(ABCGeneralNote):
@@ -1732,7 +1744,7 @@ class ABCNote(ABCGeneralNote):
                          activeKeySignature=activeKeySignature)
 
         self.pitch_name: str = p        # m21 formated pitch name
-        self.accidental: str = a       # m21 formated accidental
+        self.accidental: str = a        # m21 formated accidental
         self.octave: int = o            # octave number
 
         # accidental propagated from a previous note in the same measure
@@ -1775,15 +1787,16 @@ class ABCNote(ABCGeneralNote):
         >>> abcFormat.ABCNote._parse_note("^_C'6/4")
         ('C', '-', 5, '6/4')
         """
-        ACCIDENTAL_MAP = {'^': '#', '^^': '##', '=': 'n', '_': '-', '__': '--'}
+        ABC_TO_M21_ACCIDENTAL_MAP = {'^': '#', '^^': '##', '=': 'n', '_': '-', '__': '--'}
         match = RE_ABC_NOTE.match(src)
         if match:
             accidental = match.group(1)
             if accidental:
                 # If no 2 charakter accidental is found, then
                 # try to get a one charakter accidental
-                accidental = ACCIDENTAL_MAP.get(accidental[-2:],
-                                                ACCIDENTAL_MAP.get(accidental[-1], ''))
+                accidental = ABC_TO_M21_ACCIDENTAL_MAP.get(
+                    accidental[-2:],
+                    ABC_TO_M21_ACCIDENTAL_MAP.get(accidental[-1], ''))
             else:
                 accidental = ''
             pitch = match.group(2)
@@ -1802,23 +1815,25 @@ class ABCNote(ABCGeneralNote):
 
         return (pitch.upper(), accidental, octave, length)
 
-    def apply_tie(self, obj):
+    def apply_tie(self, note: 'musci21.note.Note'):
         from music21 import tie
         if self.tie is not None:
             if self.tie in ('start', 'continue'):
-                obj.tie = tie.Tie(self.tie)
-                obj.tie.style = 'normal'
+                note.tie = tie.Tie(self.tie)
+                note.tie.style = 'normal'
             elif self.tie == 'stop':
-                obj.tie = tie.Tie(self.tie)
+                note.tie = tie.Tie(self.tie)
 
-    def m21Object(self) -> 'music21.note.Note':
-        '''
-        Given a note or rest string without a chord symbol,
-        return a music21 pitch string or None (if a rest),
-        and the accidental display status. This value is paired
-        with an accidental display status. Pitch alterations, and
-        accidental display status, are adjusted if a key is
-        declared in the Note.
+    def m21Object(self) -> Union['music21.note.Note', 'music21.note.Rest']:
+        """
+            Get a music21 note or restz object
+            QuarterLength, ties, articulations, expressions, grace,
+            spanners and tuplets are applied.
+            If this note is a rest, only tuplets, quarterlength and
+            spanners are applied.
+
+        return:
+            music21 note or rest object corresponding to this token.
 
         >>> k = key.Key('G')
         >>> n = abcFormat.ABCNote("^f'", activeKeySignature=k).m21Object()
@@ -1858,7 +1873,7 @@ class ABCNote(ABCGeneralNote):
         'C-flat in octave 6 16th Note'
         >>> n.pitch.accidental.displayStatus
         True
-        '''
+        """
 
         from music21 import note
         if self.isRest:
@@ -1901,7 +1916,13 @@ class ABCNote(ABCGeneralNote):
 
             if n.pitch.accidental is not None:
                 n.pitch.accidental.displayStatus = display
-            self.apply_context(n)
+
+            self.apply_articulations(n)
+            self.apply_expressions(n)
+            self.apply_spanners(n)
+
+            if self.inGrace:
+                n = n.getGrace()
 
         n.duration.quarterLength = self.quarterLength()
         self.apply_tuplet(n)
@@ -1937,23 +1958,36 @@ class ABCChord(ABCGeneralNote):
         if parent_handler:
             self.chordHandler = ABCHandler(
                 abcVersion=parent_handler.abcVersion,
-                user_defined_token=parent_handler.user_defined_token
+                redefinable_symbols=parent_handler.redefinable_symbols
             )
         else:
             self.chordHandler = ABCHandler()
 
     @property
-    def subTokens(self):
+    def subTokens(self) -> List[Union[ABCNote, ABCExpression, ABCArticulation]]:
+        '''
+        Internal note tokens and there expressions & articulations
+        '''
         return self.chordHandler.tokens
 
+    @property
     def isEmpty(self) -> bool:
+        """
+        A chord without a note is empty even if tokens
+        of other types are present.
+        """
         return self._first_note is None
 
     def tokenize(self):
+        """
+        Lets the chord handler tokenize the internal string.
+        Illegal tokens are removed from the result.
+        In addition, the first note of the chord is determined
+        """
         self.chordHandler.tokens = self.chordHandler.tokenize(self.innerStr)
-        # Only keep accents, expressions and notes
+        # Only keep articulations, expressions and notes
         tokens = [t for t in self.chordHandler.tokens if
-                  isinstance(t, (ABCAccent, ABCExpressions)) or
+                  isinstance(t, (ABCAccent, ABCExpression)) or
                   isinstance(t, ABCNote)]
 
         self._first_note = next((t for t in tokens if isinstance(t, ABCNote)), None)
@@ -1961,6 +1995,16 @@ class ABCChord(ABCGeneralNote):
 
     def quarterLength(self, defaultQuarterLength: Optional[float]=None):
         """
+        Get the length of this chord relative to a quarter note.
+
+        Arguments:
+            defaultQuarterLength:
+                Optionally, a different DefaultQuarterLength can be specified.
+                The quarter note length of the object is not replaced.
+        Returns:
+            CHord length relative to quarter note
+
+
         >>> c = abcFormat.ABCChord('[abc]', defaultQuarterLength=1.0)
         >>> c.tokenize()
         >>> c.quarterLength()
@@ -1991,17 +2035,30 @@ class ABCChord(ABCGeneralNote):
         >>> c.quarterLength()
         0.125
         """
-        # <lengthModifier>: modifier providet by the abc length syntax
-        # <brokenRyhtm>: a BrokenRythm modifier
-        # <_first_note.quarterLength>: the length of the first note
-        if self.isEmpty():
+        if self.isEmpty:
             return 0
+
         if defaultQuarterLength is None:
             defaultQuarterLength = self.activeDefaultQuarterLength
+
+        # The length of a chord is determined by the product of the length modifier,
+        # the brokenRyhmus modifier and the length of the first note of the chord.
         return self.lengthModifier * self.brokenRyhtmModifier * self._first_note.quarterLength(defaultQuarterLength)
 
     def m21Object(self) -> 'music21.chord.Chort':
-        if self.isEmpty():
+        """
+            Get a music21 chord object
+            QuarterLength, ties, articulations, expressions, grace,
+            spanners and tuplets are applied to the chord.
+            In addition, expressions and articulations inside the chord
+            are individually assigned to the chord notes.
+
+            If this chord is empty it returns None.
+
+        return:
+            music21 chord object corresponding to this token.
+        """
+        if self.isEmpty:
             return None
 
         notes = []
@@ -2014,8 +2071,14 @@ class ABCChord(ABCGeneralNote):
         from music21.chord import Chord
         c = Chord(notes)
         c.duration.quarterLength = self.quarterLength()
-        self.apply_context(c)
+        self.apply_articulations(c)
+        self.apply_expressions(c)
+        self.apply_spanners(c)
         self.apply_tuplet(c)
+
+        if self.inGrace:
+            c = c.getGrace()
+
         return c
 
 # ------------------------------------------------------------------------------
@@ -2024,7 +2087,6 @@ TOKEN_SPEC = {
     'DIRECTIVE': (r'^%%.*$', None),
     'COMMENT': ('[ ]*%.*$', None),
     'BARLINE': (BARLINES, ABCBar),
-    'CHORD_SYMBOL': (r'"[^"]*"', ABCChordSymbol),
     'INLINE_FIELD': (r'\[[A-Zwms]:[^\]%]*\]', ABCMetadata),
     'TUPLET_GENERAL': (r'\([2-9]([:][2-9]?([:][2-9]?)?)?', ABCTuplet),
     'TUPLET_SIMPLE': (r'\([2-9]', ABCTuplet),
@@ -2040,8 +2102,8 @@ TOKEN_SPEC = {
     'FERMENTA': (r'!fermata!', ABCFermata),
     'IRISH_ROLL': (r'!roll!', None),  # Not Supported ?
     'LOWER_MORDENT': (r'!lowermordent!', ABCLowerMordent),
-    'UPPER_MORDENT': (r'!uppermordent', ABCUpperMordent),
-    'CODA': (r'!coda!', ABCCoda),
+    'UPPER_MORDENT': (r'!uppermordent!|!pralltriller!', ABCUpperMordent),
+    #'CODA': (r'!coda!', ABCCoda),
     'SEGNO': (r'!segno!', ABCSegno),
     'CRESENDO': (r'!(crescendo|<)[\(]!', ABCCrescStart),
     'DIMINUENDO': (r'!(diminuendo|>)[\(]!', ABCDimStart),
@@ -2049,20 +2111,48 @@ TOKEN_SPEC = {
     'CRESENDO_STOP': (r'!(crescendo|[>])[\)]!', ABCParenStop),
     'SLUR': (r'\((?=[^0-9])', ABCSlurStart),
     'SLUR_STOP': (r'\)', ABCParenStop),
-    'BROKEN_RYTHM': (r'[>]+|[<]+', ABCBrokenRhythmMarker),
+    'BROKEN_RYTHM': (r'[>]+|[<]+', ABCBrokenRhythm),
     'GRACE': (r'{', ABCGraceStart),
     'GRACE_STOP': (r'}', ABCGraceStop),
+    #'DYNAMIC': (r'![p]{1,4}!|![f]{1,4}!|m[pf]|sfz', ABCDynamic),
+    #'TURN': ('!turn', ABCTurn),             # Not implemented yet
+    #'ARPEGGIO!: (!arpeggio!, ABCArpeggio), # Not implemented yet
     'STACCATO': (r'\.', ABCStaccato),
-    'TENUTO': (r'M', ABCTenuto),
-    'STRACCENT': (r'k', ABCStraccent),
-    'USER_DEFINED_TOKEN': (r'[H-Wh-w~]', None),
+    'STRACCENT': ('!straccent!', ABCStraccent),  # Not found in ABC format specification
+    'REDEFINED_SYMBOL': (r'[H-Wh-w~]', None),
     'UNKNOWN_DECORATION': (r'![^!]+!', None),
+
 }
 
-# Build regular expression from token specification
+def build_spec():
+    import sys, inspect
+    for token_base_class in [ABCMark]:
+        for name, token_class in inspect.getmembers(sys.modules['music21.abcFormat']):
+            if inspect.isclass(token_class) and issubclass(token_class,
+                                                           token_base_class) and token_class is not token_base_class:
+                if hasattr(token_class, 'match'):
+                    TOKEN_SPEC[f'{name}'] = (f"{token_class.match}", token_class)
+                    print(f'"{name}": {(token_class.match, token_class)}')
+                else:
+                    environLocal.printDebug(
+                        [f'Token Class "{name}" has no attribute match"']
+                    )
+
+
+
+TOKEN_SPEC['ABCChordSymbol'] = (r'"[^"]*"', ABCChordSymbol)
+
+#breakpoint()
+
 TOKEN_RE = re.compile(r'|'.join(r'(?P<%s>%s)' % (rule, v[0])
                                 for rule, v in TOKEN_SPEC.items()),
-                      re.MULTILINE)
+                           re.MULTILINE)
+
+#from pprint import pprint
+#pprint (TOKEN_SPEC)
+#[ABC_MARK_RE_STRING]
+# Build regular expression from token specification
+
 
 class ABCHandler:
     '''
@@ -2072,64 +2162,37 @@ class ABCHandler:
     Optionally, specify the (major, minor, patch) version of ABC to process--
     e.g., (1.2.0). If not set, default ABC 1.3 parsing is performed.
 
-    If lineBreaksDefinePhrases is True then new lines within music elements
-    define new phrases.  This is useful for parsing extra information from
-    the Essen Folksong repertory
-
     New in v6.2 -- lineBreaksDefinePhrases -- does not yet do anything
+    If lineBreaksDefinePhrases is True then new lines within music elements
+    define new phrases. This is useful for parsing extra information from t
+    he Essen Folksong repertory (@TODO)
     '''
 
-    def __init__(self, abcVersion=None, lineBreaksDefinePhrases=False, user_defined_token=None):
-
-        # set explitcit ABCVersion, ignore version string in file
+    def __init__(self, abcVersion=None, lineBreaksDefinePhrases=False, redefinable_symbols=None):
+        # If the ABC version is set explicit, the version string in the ABC text is ignored.
         self.abcVersion = abcVersion
+        # A dictonary for directives (only accidental propagation is supported yet)
         self.abcDirectives = {}
-        self.user_defined_token = {} if user_defined_token is None else user_defined_token
+        # Dictonary for redefinable symbols
+        self.redefinable_symbols = {} if redefinable_symbols is None else redefinable_symbols
         self.tokens = []
         self.activeParens = []
         self.activeSpanners = []
         self.lineBreaksDefinePhrases = lineBreaksDefinePhrases
         self.src = ''
 
-    @staticmethod
-    def barlineTokenFilter(token: str) -> ABCBar:
-        '''
-        Some single barline tokens are better replaced
-        with two tokens. This method, given a token,
-        returns a list of tokens. If there is no change
-        necessary, the provided token will be returned in the list.
-
-        A staticmethod.  Call on the class itself.
-
-        >>> abcFormat.ABCHandler.barlineTokenFilter('::')
-        [<music21.abcFormat.ABCBar ':|'>, <music21.abcFormat.ABCBar '|:'>]
-
-        >>> abcFormat.ABCHandler.barlineTokenFilter('|2')
-        [<music21.abcFormat.ABCBar '|'>, <music21.abcFormat.ABCBar '[2'>]
-
-        >>> abcFormat.ABCHandler.barlineTokenFilter(':|1')
-        [<music21.abcFormat.ABCBar ':|'>, <music21.abcFormat.ABCBar '[1'>]
-
-        If nothing matches, the original token is returned as an ABCBar object:
-
-        >>> abcFormat.ABCHandler.barlineTokenFilter('hi')
-        [<music21.abcFormat.ABCBar 'hi'>]
-        '''
-        return {
-            '::': [ABCBar(':|'), ABCBar('|:')],
-            '|1': [ABCBar('|'), ABCBar('[1')],
-            '|2': [ABCBar('|'), ABCBar('[2')],
-            ':|1': [ABCBar(':|'), ABCBar('[1')],
-            ':|2': [ABCBar(':|'), ABCBar('[2')]
-        }.get(token, [ABCBar(token)])
-
     # --------------------------------------------------------------------------
     # token processing
 
-    def getUserdefinedToken(self, src: str) -> str:
-        # get the token rule and the abc expression in the user_definition.
-        # if the symbol is not defined in the user definitions
-        # return the default token.
+    def getRedefinableSymbol(self, src: str) -> str:
+        """
+        Lookup the token specification rule of a redefinable smbol.
+        If the symbol is not found it try to find a definition in a
+        default dictonary.
+
+        The letters H-W and h-w and the symbol ~ can be assigned with the
+        U: field.
+        """
         DEFAULTS = {
             '~': 'IRISH_ROLL',
             'H': 'FERMENTA',
@@ -2137,13 +2200,15 @@ class ABCHandler:
             'M': 'LOWER_MORDENT',
             'O': 'CODA',
             'P': 'UPPER_MORDENT',
-            'S': 'SEGNO',
+            'S': 'ABCSegno',
             'T': 'TRILL',
+            'k': 'STRACCENT',
             'u': 'UPBOW',
             'v': 'DOWNBOW'
         }
+
         try:
-            return self.user_defined_token[src]
+            return self.redefinable_symbols[src]
         except KeyError:
             return DEFAULTS[src]
 
@@ -2238,7 +2303,6 @@ class ABCHandler:
         for m in TOKEN_RE.finditer(src):
             rule = m.lastgroup
             value = m.group()
-
             if rule == 'DIRECTIVE':
                 directiveMatches = RE_DIRECTIVE.match(value)
                 if directiveMatches:
@@ -2257,13 +2321,16 @@ class ABCHandler:
                 m = ABCMetadata(value)
                 symbol, rule = m.getUserDefinedSymbol()
                 if rule:
-                    self.user_defined_token[symbol] = rule
+                    self.redefinable_symbols[symbol] = rule
                 continue
 
             # Some barlines are replaced by multiple tokens
             if rule == 'BARLINE':
-                yield from iter(self.barlineTokenFilter(value))
+                yield from iter(ABCBar.barlineTokenFilter(value))
                 continue
+
+            if rule == 'ABCChordSymbol':
+                breakpoint
 
             # Tokenize the internal abc string of a Chord
             if rule == 'CHORD':
@@ -2273,9 +2340,9 @@ class ABCHandler:
                 continue
 
             # Lookup rule from an user defined token
-            if rule == 'USER_DEFINED_TOKEN':
+            if rule == 'REDEFINED_SYMBOL':
                 try:
-                    rule = self.getUserdefinedToken(value)
+                    rule = self.getRedefinableSymbol(value)
                 except KeyError:
                     environLocal.printDebug(
                         [f'Token "value" is not user defined or has a default definition'])
@@ -2297,7 +2364,7 @@ class ABCHandler:
         irregularDefaultQL = True        # The default QL was not set by the 'L:' field
         lastKeySignature = None
         lastTimeSignatureObj = None  # an m21 object
-        lastTupletToken = None  # a token obj; keeps count of usage
+        lastTupletToken = None  # a token note; keeps count of usage
         lastTieToken = None
         lastGraceToken = None
         lastNoteToken = None
@@ -2368,7 +2435,7 @@ class ABCHandler:
             elif isinstance(t, ABCArticulation):
                 lastArticulations.append(t)
 
-            elif isinstance(t, ABCExpressions):
+            elif isinstance(t, ABCExpression):
                 # Filter and collect expression token
                 lastExpressions.append(t.m21Object())
 
@@ -2401,7 +2468,7 @@ class ABCHandler:
                         self.activeSpanners = []
 
             # broken rhythms need to be applied to previous and next notes
-            elif isinstance(t, ABCBrokenRhythmMarker):
+            elif isinstance(t, ABCBrokenRhythm):
                 # we need a token to the left side for the broken rythm
                 if lastNoteToken:
                     lastBrokenRythm = t
@@ -2409,8 +2476,6 @@ class ABCHandler:
             elif isinstance(t, ABCBar):
                 # reset active accidentals on bar change
                 accidentalized = {}
-                # @TODO: the last unicum with parse() - kill it or not
-                t.parse()
 
             # need to update tuplets with currently active meter
             elif isinstance(t, ABCTuplet):
@@ -2666,7 +2731,7 @@ class ABCHandler:
             if isinstance(t, ABCBar):
                 # must define at least 2 regular barlines
                 # this leave out cases where only double bars are given
-                if t.isRegular():
+                if t.isRegular:
                     count += 1
                     # forcing the inclusion of two measures to count
                     if count >= 2:
@@ -3226,8 +3291,19 @@ class Test(unittest.TestCase):
             # Fix the number of Tokens about the number of additional ChordSymbol
             chord_symbols = [cs for cs in tokens if isinstance(cs, ABCChordSymbol)]
             countTokens += len(chord_symbols)
-            self.assertEqual(len(tokens), countTokens)
-
+            try:
+                self.assertEqual(len(tokens), countTokens, f'Wrong tokenumer in abc src:\n{tf}')
+            except:
+                print(tf)
+            """
+M:4/4
+ed|cecA B2ed|cAcA E2ed|cecA B2ed|c2A2 A2:|
+K:G
+AB|cdec BcdB|ABAF GFE2|cdec BcdB|c2A2 A2:|
+% comment line
+E2E EFE|E2E EFG|M:9/8
+A2G F2E D2|]
+"""
             countNotes = 0
             countChords = 0
             for o in tokens:
@@ -3603,7 +3679,7 @@ class Test(unittest.TestCase):
 <music21.abcFormat.ABCBar '|'>
 <music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCNote '^D'>
-<music21.abcFormat.ABCTenuto 'M'>
+<music21.abcFormat.ABCLowerMordent 'M'>
 <music21.abcFormat.ABCNote 'E'>
 <music21.abcFormat.ABCNote 'F'>
 <music21.abcFormat.ABCTuplet '(3'>
@@ -3616,7 +3692,7 @@ class Test(unittest.TestCase):
 <music21.abcFormat.ABCParenStop ')'>
 <music21.abcFormat.ABCNote 'B'>
 <music21.abcFormat.ABCStraccent 'k'>
-<music21.abcFormat.ABCTenuto 'M'>
+<music21.abcFormat.ABCLowerMordent 'M'>
 <music21.abcFormat.ABCNote 'A'>
 <music21.abcFormat.ABCBar '|'>
 <music21.abcFormat.ABCSlurStart '('>
@@ -3668,14 +3744,12 @@ class Test(unittest.TestCase):
         j = 0
         k = 0
         for t in tokens:
-            if isinstance(t, music21.abcFormat.ABCNote):
-                for a in t.articulations:
-                    if isinstance(a, music21.abcFormat.ABCAccent):
-                        i += 1
-                    if isinstance(a, music21.abcFormat.ABCStraccent):
-                        j += 1
-                    if isinstance(a, music21.abcFormat.ABCTenuto):
-                        k += 1
+                if isinstance(t, music21.abcFormat.ABCAccent):
+                    i += 1
+                if isinstance(t, music21.abcFormat.ABCStraccent):
+                    j += 1
+                if isinstance(t, music21.abcFormat.ABCLowerMordent):
+                    k += 1
 
         self.assertEqual(i, 2)
         self.assertEqual(j, 2)
