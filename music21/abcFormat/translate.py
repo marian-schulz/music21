@@ -131,7 +131,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
 
             if mh.leftBarToken is not None:
                 # this may be Repeat Bar subclass
-                bLeft = mh.leftBarToken.ms21Object()
+                bLeft = mh.leftBarToken.getBarObject()
                 if bLeft is not None:
                     dst.leftBarline = bLeft
                 if mh.leftBarToken.isRepeatBracket():
@@ -159,7 +159,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
                         rb.completeStatus = True
 
             if mh.rightBarToken is not None:
-                bRight = mh.rightBarToken.ms21Object()
+                bRight = mh.rightBarToken.getBarObject()
                 if bRight is not None:
                     dst.rightBarline = bRight
                 # above returns bars and repeats; we need to look if we just
