@@ -29,6 +29,7 @@ from music21 import key
 from music21 import repeat
 from music21 import chord
 from music21 import note
+from music21 import meter
 
 environLocal = environment.Environment('abcFormat')
 environment.set('debug', True)
@@ -44,19 +45,20 @@ class ABCTokenException(exceptions21.Music21Exception):
 RE_ABC_VERSION = re.compile(r'(?:((^[^%].*)?[\n])*%abc-)(\d+)\.(\d+)\.?(\d+)?')
 
 
-def parseABCVersion(src: str) -> Optional[Tuple[int,int,int]]:
+ABCVersion = Tuple[int, int, int]
+def parseABCVersion(src: str) -> Optional[ABCVersion]:
     '''
     Every abc file conforming to the standard should start with the line
     %abc-2.1
 
-    >>> ah.parseABCVersion('%abc-2.3.2')
+    >>> ABCFormat.tokens.parseABCVersion('%abc-2.3.2')
     (2, 3, 2)
 
     Catch only abc version as first comment line
-    >>> ah.parseABCVersion('%first comment\\n%abc-2.3.2')
+    >>> parseABCVersion('%first comment\\n%abc-2.3.2')
 
     But ignore post comments
-    >>> ah.parseABCVersion('X:1 % reference number\\n%abc-2.3.2')
+    >>> parseABCVersion('X:1 % reference number\\n%abc-2.3.2')
     (2, 3, 2)
     '''
     verMats = RE_ABC_VERSION.match(src)
@@ -309,7 +311,7 @@ class ABCField(ABCToken):
         '''
         return [s.strip() for s in RE_ABC_LYRIC.findall(self.data)]
 
-    def getUserDefinedSymbol(self) -> Tuple[str, Optional[str]]:
+    def getUserDefinedSymbol(self) -> Tuple[str, ABCToken]:
         '''
         >>> am = abcFormat.ABCMetadata('U:Z=!trill!')
         >>> am.getUserDefinedSymbol()
@@ -323,12 +325,13 @@ class ABCField(ABCToken):
                 'no user defined symbol is associated with this metadata.')
 
         symbol, definition = self.data.split('=', 1)
-        try:
-            m = TOKEN_RE.match(definition)
-            r = symbol, m.lastgroup
-            return r
-        except AttributeError:
-            return (symbol, None)
+        # get token
+        m = abcTokenizer(definition)
+        if len(m) > 1:
+            raise ABCTokenException(f'Got more than one token in the user defined symob "{self.src}"')
+        r = symbol, m.lastgroup
+        return r
+
 
     def getTimeSignatureParameters(self) -> Optional[Tuple[List[int], int, str]]:
         """
@@ -1060,10 +1063,10 @@ class ABCTuplet(ABCToken):
         # store an m21 tuplet object
         self._m21Object = None
 
-    def m21Object(self) -> Optional[duration.Tuplet]:
-        return self._m21Object
+    def m21Object(self) -> Optional[duration.Duration]:
+        return self._m21ObjectTuplet
 
-    def updateRatio(self, keySig: Optional[key.KeySignature]=None):
+    def updateRatio(self, keySig: Optional[meter.TimeSignature]=None):
         # noinspection PyShadowingNames
         '''
         Cannot be called until local meter context
@@ -1135,7 +1138,7 @@ class ABCTuplet(ABCToken):
         Traceback (most recent call last):
         music21.abcFormat.ABCTokenException: cannot handle tuplet of form: '(10'
         '''
-        if keySig is None or keySig.beatDivisionCount != 3:
+        if timeSig is None or timeSig.beatDivisionCount != 3:
             normalSwitch = 2  # 4/4
         else:  # if compound
             normalSwitch = 3
