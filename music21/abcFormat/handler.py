@@ -21,20 +21,11 @@ class ABCHandler:
     he Essen Folksong repertory (@TODO)
     '''
 
-    def __init__(self, abcVersion=None, lineBreaksDefinePhrases=False):
-
+    def __init__(self, tokens: List[ABCToken], abcVersion=None, lineBreaksDefinePhrases=False):
         # If the ABC version is set explicit, the version string in the ABC text is ignored.
         self.abcVersion = abcVersion
         self.lineBreaksDefinePhrases = lineBreaksDefinePhrases
-
-    def process(self, tokens: Iterable[ABCToken]):
-        return NotImplemented
-
-    def __len__(self):
-        return NotImplemented
-
-    def __iter__(self):
-        return NotImplemented
+        self.tokens = tokens
 
     def hasNotes(self) -> bool:
         '''
@@ -53,13 +44,6 @@ class ABCHandler:
         if not self.tokens:
             return False
         return any(isinstance(t, (ABCGeneralNote)) for t in self.tokens)
-
-class ABCFlatTokenHandler(ABCHandler):
-    def __init__(self, tokens: List[ABCToken],
-                 abcVersion=None,
-                 lineBreaksDefinePhrases=False):
-        super().__init__(abcVersion, lineBreaksDefinePhrases)
-        self.tokens = tokens
 
     def __add__(self, other):
         '''
@@ -82,145 +66,50 @@ class ABCFlatTokenHandler(ABCHandler):
         return iter(self.tokens)
 
     def __getitem__(self, index):
-        return self.token[index]
+        return self.tokens[index]
 
-
-class ABCHeader(ABCFlatTokenHandler):
-
-    def __init__(self, tokens: List[ABCToken],
-                 abcVersion=None,
-                 lineBreaksDefinePhrases=False):
-        super().__init__(tokens, abcVersion, lineBreaksDefinePhrases)
-        self.defaultNoteLength = None
-        self.timeSignature = None
-        self.keySignature = None
-        self.composer = None
-        self.origin = None
-        self.title = None
-        self.tempo = None
-        self.title = None
-        self.book = None
-        self.abcDirectives : Dict = {}
-        self.userDefined : Dict = {}
-
-    def process(self, parent: Optional['ABCHeader'] = None):
-
-        if parent:
-            self.unitNoteLength = parent.unitNoteLength
-            self.timeSignature = parent.timeSignature
-            self.userDefined = dict(parent.userDefined)
-            self.composer = parent.composer
-            self.origin = parent.origin
-            self.tempo = parent.tempo
-            self.title = parent.title
-            self.book = parent.book
-            self.abcDirectives = self.abcDirectives
-
-        for token in self.tokens:
-            if token.isMeter():
-                ts = token.getTimeSignatureObject()
-                if ts:
-                    self.timeSignature = ts
-                    if self.unitNoteLength is None:
-                        self.unitNoteLength = token.getDefaultQuarterLength()
-            elif token.isUserDefinedSymbol():
-                key, value = token.getUserDefinedSymbol()
-                self.userDefined[key] = value
-            elif token.isDefaultNoteLength():
-                self.defaultNoteLength = token.getDefaultQuarterLength()
-            elif token.isKey():
-                self.keySignature = token.getKeySignatureObject()
-            elif token.isComposer():
-                self.composer = token.data
-            elif token.isOrigin():
-                self.origin = token.data
-            elif token.isTempo():
-                self.tempo = token.getMetronomeMarkObject()
-            elif token.isTitle():
-                self.title = token.data
-
-        if self.unitNoteLength is None:
-            self.unitNoteLength = 0.5
-
-
-class ABCVoice(ABCFlatTokenHandler):
-    '''
-    Handles all tokens belonging to an ABCVoice
-    '''
-    def __init__(self, tokens: List[ABCToken],
-                 abcVersion=None,
-                 lineBreaksDefinePhrases=False):
-
-        super().__init__(tokens, abcVersion, lineBreaksDefinePhrases)
-
-    def _accidentalPropagation(self) -> str:
-        '''
-        Determine how accidentals should 'carry through the measure.'
-
-        >>> ah = abcFormat.ABCHandler(abcVersion=(1, 3, 0))
-        >>> ah._accidentalPropagation()
-        'not'
-        >>> ah = abcFormat.ABCHandler(abcVersion=(2, 0, 0))
-        >>> ah._accidentalPropagation()
-        'pitch'
-        '''
-        minVersion = (2, 0, 0)
-        if not self.abcVersion or self.abcVersion < minVersion:
-            return 'not'
-        if 'propagate-accidentals' in self.abcDirectives:
-            return self.abcDirectives['propagate-accidentals']
-        return 'pitch'  # Default per abc 2.1 standard
-
-    def process(self, header: Optional[ABCHeader]=None):
+    def process(self, header: Optional['ABCHeader'] = None):
         # Init vars from tune header
-        if tune:
+        if header:
             unitNoteLength = header.unitNoteLength
             timeSignature = header.timeSignature
-            userDefined = dict(header.userDefined if header.userDefined else DEFAULT_SYMBOLS)
+            userDefined = dict(header.userDefined)
             keySignature = header.keySignature
+            abcDirectives = dict(header.abcDirectives)
         else:
             unitNoteLength = 0.5
             timeSignature = None
             userDefined = {}
             keySignature = None
+            abcDirectives = {}
 
         lastNote: Optional[ABCGeneralNote] = None
-        lastTuplet : Optional[ABCTuplet] = None
+        lastTuplet: Optional[ABCTuplet] = None
         lastTie: Optional[ABCTie] = None
         lastGrace: Optional[ABCGraceStart] = None
-        lastBrokenRythm : Optional[ABCBrokenRhythm] = None
-        lastExpressions : List[ABCExpression] = []
-        lastArticulations : List[ABCArticulation] = []
+        lastBrokenRythm: Optional[ABCBrokenRhythm] = None
+        lastExpressions: List[ABCExpression] = []
+        lastArticulations: List[ABCArticulation] = []
         activeParens = []
         activeSpanners = []
         accidentalized = {}
+        activeMeasure = []
+        measures = []
 
         for token in self:
+            # Lookup a token
+            if isinstance(token, ABCSymbol):
+                try:
+                    token = self.userDefined[token.src]
+                except KeyError:
+                    environLocal.printDebug(['ABCSymbol "{self.src}" without definition found.'])
+                    continue
+
             # note & chords first, they are the most common tokens
             if isinstance(token, ABCGeneralNote):
-                if isinstance(token, ABCChord):
-                    # process the inner chord subtokens
-                    token.chordHandler.process(token.subTokens)
 
-                elif isinstance(token, ABCNote) and not token.isRest:
-                    # @TODO: is accidental propagation relevant for the chord subnotes ?
-                    propagation = self._accidentalPropagation()
-
-                    if token.accidental:
-                        # Remember the accidental of this note
-                        if propagation == 'octave':
-                            accidentalized[(token.pitch_name, token.octave)] = token.accidental
-                        elif propagation == 'pitch':
-                            accidentalized[token.pitch_name] = token.accidental
-                    else:
-                        # Lookup the active accidentals
-                        if propagation == 'pitch' and token.pitch_name in accidentalized:
-                            token.carriedAccidental = accidentalized[token.pitch_name]
-                        elif propagation == 'octave' and (token.pitch_name, token.octave) in accidentalized:
-                            token.carriedAccidental = accidentalized[(token.pitch_name, token.octave)]
-
-                token.activeDefaultQuarterLength = unitNoteLength
-                token.activeKeySignature = keySignature
+                token.activeDefaultQuarterLength = self.unitNoteLength
+                token.activeKeySignature = self.keySignature
                 token.applicableSpanners = self.activeSpanners[:]  # fast copy of a list
 
                 # Attached the collected articulations to notes & chords
@@ -251,63 +140,61 @@ class ABCVoice(ABCFlatTokenHandler):
                     # add a reference to the note
                     token.activeTuplet = lastTuplet.m21Object()
 
+                self.propagation = self._accidentalPropagation()
+
+                if isinstance(token, ABCChord):
+                    token.process
+                    chord_handler = ABCChordHandler(chord, self.abcVersion, self.lineBreaksDefinePhrases)
+                    chord_handler =
+                    self.process_chord(token)
+                elif isinstance(token, ABCNote) and not token.isRest:
+                    # @TODO: is accidental propagation relevant for the chord subnotes ?
+                    if token.accidental:
+                        # Remember the accidental of this note
+                        if self.propagation == 'octave':
+                            accidentalized[(token.pitch_name, token.octave)] = token.accidental
+                        elif self.propagation == 'pitch':
+                            accidentalized[token.pitch_name] = token.accidental
+                    else:
+                        # Lookup the active accidentals
+                        if self.propagation == 'pitch' and token.pitch_name in accidentalized:
+                            token.carriedAccidental = accidentalized[token.pitch_name]
+                        elif self.propagation == 'octave' and (token.pitch_name, token.octave) in accidentalized:
+                            token.carriedAccidental = accidentalized[(token.pitch_name, token.octave)]
+
                 # remember this note/chord
                 lastNote = token
-                continue
 
-            if isinstance(token, ABCMetadata):
+            elif isinstance(token, ABCField):
                 if token.isMeter():
                     ts = token.getTimeSignatureObject()
                     if ts:
                         timeSignature = ts
                 elif token.isUserDefinedSymbol():
                     key, value = token.getUserDefinedSymbol()
-                    userDefined[key] = value
+                    self.userDefined[key] = value
                 elif token.isDefaultNoteLength():
-                    unitNoteLength = token.getDefaultQuarterLength()
+                    self.unitNoteLength = token.getDefaultQuarterLength()
                 elif token.isKey():
-                    keySignature = token.getKeySignatureObject()
+                    self.keySignature = token.getKeySignatureObject()
                 elif token.isTempo():
                     tempo = token.getMetronomeMarkObject()
-                continue
+            elif lastNote and isinstance(token, ABCBrokenRhythm) and
+                lastBrokenRythm = token
 
-            if isinstance(token, ABCBrokenRhythm):
-                # we need a token to the left side for the broken rythm
-                if lastNote:
-                    lastBrokenRythm = token
-
-            if isinstance(token, ABCUserDefinedSymbol):
-                try:
-                    token = userDefined[token.src]
-                except KeyError:
-                    # Symbol has no definition !
-                    continue
-
-            elif isinstance(token, ABCBar):
-                # reset active accidentals on bar change
-                accidentalized = {}
-
-                # need to update tuplets with currently active meter
             elif isinstance(token, ABCTuplet):
                 token.updateRatio(timeSignature)
-                # set number of notes that will be altered
-                # might need to do this with ql values, or look ahead to nxt
-                # token
                 token.updateNoteCount()
                 lastTuplet = token
                 activeParens.append('Tuplet')
-
-            # notes within slur marks need to be added to the spanner
             elif isinstance(token, ABCSpanner):
                 activeSpanners.append(token.m21Object())
                 activeParens.append(token)
-
             elif isinstance(token, ABCParenStop):
-                if self.activeParens:
-                    p = self.activeParens.pop()
+                if activeParens:
+                    p = activeParens.pop()
                     if isinstance(p, ABCSpanner):
-                        self.activeSpanners.pop()
-
+                        activeSpanners.pop()
             elif isinstance(token, ABCTie):
                 # @TODO: Question - can we lost an relevant 'lastNodeToken' ?
                 if lastNote and lastNote.tie == 'stop':
@@ -315,14 +202,127 @@ class ABCVoice(ABCFlatTokenHandler):
                 elif lastNote:
                     lastNote.tie = 'start'
                 lastTie = token
-
             elif isinstance(token, ABCGraceStart):
                 lastGrace = token
             elif isinstance(token, ABCGraceStop):
                 lastGrace = None
+            elif isinstance(token, ABCArticulation):
+                lastArticulations.append(token)
+            elif isinstance(token, ABCExpression):
+                lastExpressions.append(token)
+            elif isinstance(token, ABCBar):
+                self.accidentalized = {}
+                measures.append(activeMeasure)
+                activeMeasure = []
+                continue
+
+
+ABCHeaderToken = Union[ABCField, ABCDirective]
+
+class ABCHeader():
+    def __init__(self, tokens: List[ABCHeaderToken],
+                 abcVersion=None,
+                 lineBreaksDefinePhrases=False):
+        super().__init__(tokens, abcVersion, lineBreaksDefinePhrases)
+
+        self.defaultNoteLength = None
+        self.timeSignature = None
+        self.keySignature = None
+        self.composer = None
+        self.origin = None
+        self.title = None
+        self.tempo = None
+        self.title = None
+        self.book = None
+        self.abcDirectives : Dict = {}
+        self.userDefined : Dict = {}
+
+    def process(self, parent: Optional['ABCHeader'] = None):
+
+        if parent:
+            self.unitNoteLength = parent.unitNoteLength
+            self.timeSignature = parent.timeSignature
+            self.userDefined = dict(parent.userDefined)
+            self.composer = parent.composer
+            self.origin = parent.origin
+            self.tempo = parent.tempo
+            self.title = parent.title
+            self.book = parent.book
+            self.abcDirectives = self.abcDirectives
+
+        for token in self.tokens:
+            if isinstance(token, ABCDirective):
+                self.abcDirectives[token.key] = token.value
+            elif isinstance(token, ABCField):
+                if token.isMeter():
+                    ts = token.getTimeSignatureObject()
+                    if ts:
+                        self.timeSignature = ts
+                        if self.unitNoteLength is None:
+                            self.unitNoteLength = token.getDefaultQuarterLength()
+                elif token.isUserDefinedSymbol():
+                    key, value = token.getUserDefinedSymbol()
+                    self.userDefined[key] = value
+                elif token.isDefaultNoteLength():
+                    self.defaultNoteLength = token.getDefaultQuarterLength()
+                elif token.isKey():
+                    self.keySignature = token.getKeySignatureObject()
+                elif token.isComposer():
+                    self.composer = token.data
+                elif token.isOrigin():
+                    self.origin = token.data
+                elif token.isTempo():
+                    self.tempo = token.getMetronomeMarkObject()
+                elif token.isTitle():
+                    self.title = token.data
+
+        if self.unitNoteLength is None:
+            self.unitNoteLength = 0.5
+
+class ABCVoice(ABCHandler):
+    '''
+    Handles all tokens belonging to an ABCVoice
+    '''
+    def __init__(self, tokens: List[ABCToken],
+                 abcVersion=None,
+                 lineBreaksDefinePhrases=False):
+
+        super().__init__(tokens, abcVersion, lineBreaksDefinePhrases)
+
+        self.unitNoteLength = 0.5
+        self.userDefined = {}
+        self.keySignature = None
+        self.timeSignature = None
+        self.accidentalized = {}
+        self.abcDirectives = None
+        self.propagation = None
+
+    def _accidentalPropagation(self) -> str:
+        '''
+        Determine how accidentals should 'carry through the measure.'
+
+        >>> ah = abcFormat.ABCHandler(abcVersion=(1, 3, 0))
+        >>> ah._accidentalPropagation()
+        'not'
+        >>> ah = abcFormat.ABCHandler(abcVersion=(2, 0, 0))
+        >>> ah._accidentalPropagation()
+        'pitch'
+        '''
+        minVersion = (2, 0, 0)
+        if not self.abcVersion or self.abcVersion < minVersion:
+            return 'not'
+        if 'propagate-accidentals' in self.abcDirectives:
+            return self.abcDirectives['propagate-accidentals']
+        return 'pitch'  # Default per abc 2.1 standard
+
+
+
+            activeMeasure.append(token)
+
+        self.tokens= measures
 
     def __str__(self):
-        return "\n".join(f'\t\t{t}' for t in self.tokens)
+        return "\n".join(str(t) for t in self.tokens)
 
 class ABCTune(ABCHandler):
     '''
@@ -335,15 +335,22 @@ class ABCTune(ABCHandler):
                        lineBreaksDefinePhrases=False):
         super().__init__(abcVersion, lineBreaksDefinePhrases)
 
-        active_voive = []
+        header, voices = self.split_header_and_voice_tokens(tokens)
+        self.header: ABCHeader = ABCHeader(tokens=header, abcVersion=self.abcVersion)
+        self.voices: List[ABCVoice] = [ABCVoice(v, abcVersion, lineBreaksDefinePhrases)
+                                       for v in voices]
+
+    def split_header_and_voice_tokens(self, tokens: List[ABCToken]) -> Tuple[List[ABCToken], List[List[ABCToken]]]:
+        active_voice = []
         all_voices = []
         header : List[ABCToken] = []
         voices = {}
-        voices['1'] = active_voive
+        voices['1'] = active_voice
         tokenIter = iter(tokens)
+
         for token in tokenIter:
             if isinstance(token, ABCField):
-                if token.tag in "ABCDFGHILMmNOPQRSTrSUWZ":
+                if token.tag in "ABCDFGHILMmNOPQRSTrSUWXZ":
                     header.append(token)
                 elif token.isKey():
                     # Stop, regular end of the tune header
@@ -361,17 +368,17 @@ class ABCTune(ABCHandler):
                             continue
                         elif voice_id in voices:
                             # change active voice
-                            active_voive = voices[voice_id]
+                            active_voice = voices[voice_id]
                         else:
                             # create new voice, start with the tokens for all voices
-                            active_voive = all_voices[:]
-                            voices[vid] = active_voive
+                            active_voice = all_voices[:]
+                            voices[voice_id] = active_voice
 
                         active_voice.append(token)
                 elif token.tag in "sw":
                     # This is a body Metatag
                     # We continue with the Body
-                    active_voive.append(token)
+                    active_voice.append(token)
                     break
                 else:
                     # Skip unknown Token
@@ -382,11 +389,8 @@ class ABCTune(ABCHandler):
             else:
                 # This is not an ABC field or directive
                 # We continue with the Body
-                active_voive.append(token)
+                active_voice.append(token)
                 break
-
-        # Create the Header Handler
-        self.header: ABCHeader = ABCHeader(tokens=header, abcVersion=self.abcVersion)
 
         # Continue with the tune body
         for token in tokenIter:
@@ -398,16 +402,16 @@ class ABCTune(ABCHandler):
                             # no all voice notation in the body
                             continue
                         if voice_id in voices:
-                            active_voive_tokens = voices[voice_id]
+                            active_voice_tokens = voices[voice_id]
                         else:
-                            active_voive_tokens = []
-                            voices[voice_id] = active_voive_tokens
+                            active_voice_tokens = []
+                            voices[voice_id] = active_voice_tokens
 
-            active_voive.append(token)
+            active_voice.append(token)
 
-        # Last Step, create Voice Handler for each voice
-        self.voices : List[ABCVoice] = [ABCVoice(t, abcVersion, lineBreaksDefinePhrases)
-                                       for t in voices.items()]
+        return header, voices.values()
+
+
 
     def process(self, tune_book: Optional['ABCTuneBook']=None):
         # process header data
@@ -429,7 +433,7 @@ class ABCTune(ABCHandler):
     def __str__(self):
         o = ['']
         if self.header:
-            o.extend(f'\t{t}' for t in self.header)
+            o.extend(f'{t}' for t in self.header)
 
         for t in self.voices:
             o.append(str(t))
@@ -492,7 +496,7 @@ class ABCTuneBook(ABCHandler):
             if isinstance(token, ABCField):
                 if token.tag == 'X':
                     # create a tune with all the collected tockens
-                    self.tunes[active_reference_number] = abcTune(active_tune,
+                    self.tunes[active_reference_number] = ABCTune(active_tune,
                                                                   abcVersion,
                                                                   lineBreaksDefinePhrases)
 
@@ -544,10 +548,11 @@ class ABCTuneBook(ABCHandler):
     def __str__(self):
         if self.header:
             o = [ f'{t}' for t in self.header]
+            o+= '\n'
         else:
             o = []
 
-        o.extend( str(t) for t in self.tunes.values() )
+        o.extend(str(t) for t in self.tunes.values() )
         return "\n".join(o)
 
 def translate(src: str):

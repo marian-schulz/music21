@@ -15,7 +15,7 @@ import copy
 import io
 import re
 import unittest
-from typing import Union, Optional, List, Tuple, Iterable, Type
+from typing import Union, Optional, List, Tuple, Iterable, Type, Dict
 
 from music21 import common
 from music21 import environment
@@ -89,11 +89,10 @@ class ABCToken():
         return None
 
     def __str__(self):
-        return f"<self.__class__.__name__ '{self.src}'>"
+        return f"{self.src}"
 
     def __repr__(self):
         return f"<{self.__class__.__name__} '{self.src}'>"
-
 
 
 class ABCMark(ABCToken):
@@ -134,15 +133,14 @@ class ABCDirective(ABCMark):
     REGEX = r'^%%.*$'
     RE_PARSE = re.compile(r'^%%([a-z\-]+)\s+([^\s]+)(.*)').match
 
-    def __init__(self):
-        super().__init__(src[2:])
-        m = ABCDirective.RE_PARSE(value)
-        if directiveMatches:
-            self.Key = directiveMatches.group(1)
-            self.Value = directiveMatches.group(2)
-            self.abcDirectives[directiveKey] = directiveValue
+    def __init__(self, src: str):
+        super().__init__(src)
+        match = ABCDirective.RE_PARSE(self.src)
+        if match:
+            self.key = match.group(1)
+            self.value = match.group(2)
         else:
-            raise ABCTokenException('Invalid ABC Directive: "<{self.src}>"')
+            raise ABCTokenException('Invalid ABC Directive: "{self.src}"')
 
 
 class ABCField(ABCToken):
@@ -162,7 +160,7 @@ class ABCField(ABCToken):
     # may be a chord, notes, metadata, bars
     REGEX = r'^[A-Zmsrsw]:[^|].*(\n[+]:[^|].*)*'
 
-    def __init__(self, src=''):
+    def __init__(self, src: str):
         '''
            Called before contextual adjustments and needs
            to have access to data.  Divides a token into
@@ -191,7 +189,7 @@ class ABCField(ABCToken):
         # start of the following line. For string-type information fields,
         # the continuation is considered to add a space between the two half lines.
         # Also remove comments
-        src = " ".join(line.split('%',1)[0].rstrip() for line in src.split('\n+:'))
+        src = " ".join(line.split('%',1)[0].strip() for line in src.split('\n+:'))
         super().__init__(src)
 
         # Detect an inline field & remove the brackets
@@ -901,6 +899,9 @@ class ABCField(ABCToken):
             raise ABCTokenException(
                 f'no quarter length associated with this metadata: {self.data}')
 
+    def __str__(self):
+        return f"{self.tag}:{self.data}"
+
 
 class ABCInlineField(ABCField):
 
@@ -911,6 +912,7 @@ class ABCInlineField(ABCField):
 
         if self.tag not in 'IKLMmNPQRrUV':
             raise ABCTokenException(f'Field tag "{self.tag}" cannot inlined.')
+
 
 class ABCBar(ABCToken):
 
@@ -1387,6 +1389,7 @@ class ABCGraceStop(ABCToken):
     '''
     REGEX = r'}'
 
+
 class ABCTrill(ABCExpression):
     '''
     Trill
@@ -1496,8 +1499,8 @@ class ABCSymbol(ABCToken):
         super().__init__(src)
         self.symbols = Optional[Dict: str, ABCToken]
 
-    def __getitem__(self, key):
-        return self.record.get(self.src, ABCSymbol.DEFAULTS['DEFAULTS'])
+    def lookup(self, userDefinition: Dict):
+        return userDefinition.get(self.src, ABCSymbol.DEFAULTS[self.src])
 
 
 class ABCBrokenRhythm(ABCToken):
@@ -1877,7 +1880,7 @@ class ABCNote(ABCGeneralNote):
 
         return (pitch.upper(), accidental, octave, length)
 
-    def apply_tie(self, note: 'musci21.note.Note'):
+    def apply_tie(self, note: note.Note):
         from music21 import tie
         if self.tie is not None:
             if self.tie in ('start', 'continue'):
@@ -1886,7 +1889,7 @@ class ABCNote(ABCGeneralNote):
             elif self.tie == 'stop':
                 note.tie = tie.Tie(self.tie)
 
-    def m21Object(self) -> Union['music21.note.Note', 'music21.note.Rest']:
+    def m21Object(self) -> Union[note.Note, note.Rest]:
         """
             Get a music21 note or restz object
             QuarterLength, ties, articulations, expressions, grace,
@@ -1936,8 +1939,6 @@ class ABCNote(ABCGeneralNote):
         >>> n.pitch.accidental.displayStatus
         True
         """
-
-        from music21 import note
         if self.isRest:
             n =  note.Rest()
         else:
@@ -2040,7 +2041,7 @@ class ABCChord(ABCGeneralNote):
         self.subTokens = [ t for t in abcTokenizer(self.innerStr) if
                   isinstance(t, (ABCArticulation, ABCExpression, ABCNote))]
 
-        self._first_note = next((t for t in tokens if isinstance(t, ABCNote)), None)
+        self._first_note = next((t for t in self.subTokens if isinstance(t, ABCNote)), None)
 
     def quarterLength(self, defaultQuarterLength: Optional[float]=None):
         """
