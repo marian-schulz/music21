@@ -91,10 +91,13 @@ class ABCToken():
         return None
 
     def __str__(self):
-        return f"{self.src}"
+        return f"{self.__repr__()}"
 
     def __repr__(self):
         return f"<{self.__class__.__name__} '{self.src}'>"
+
+
+from music21 import repeat
 
 
 class ABCMark(ABCToken):
@@ -102,6 +105,52 @@ class ABCMark(ABCToken):
     Base class of abc score marker token
     Marker can placed on every position in a stream.
     '''
+    REGEX = r'!coda!|!segno!'
+
+    M21_CLASSES = {
+        '!coda!': repeat.Coda,
+        '!segno!': repeat.Segno,
+    }
+
+    def __init__(self, src: str):
+        super().__init__(src)
+
+    def m21Object(self) -> repeat.Coda:
+        return ABCMark.M21_CLASSES[self.src]()
+
+
+class ABCDynamic(ABCMark):
+    """
+    Dynamic mark
+    """
+    REGEX = 'r![p]{1,4}!|![f]{1,4}!|!m[pf]!|!sfz!'
+
+    def m21Object(self) -> dynamics.Dynamic:
+        return dynamics.Dynamic(self.src)
+
+
+class ABCChordSymbol(ABCMark):
+    '''
+    A chord symbol
+    '''
+    REGEX = r'"[^"]*"'
+
+    def __init__(self, src):
+        src = src[1:-1].strip()
+        src = re.sub('[()]', '', src)
+        super().__init__(src)
+
+    def m21Object(self):
+        from music21 import harmony
+        cs_name = common.cleanedFlatNotation(self.src)
+        try:
+            if cs_name in ('NC', 'N.C.', 'No Chord', 'None'):
+                cs = harmony.NoChord(cs_name)
+            else:
+                cs = harmony.ChordSymbol(cs_name)
+            return cs
+        except ValueError:
+            return None#
 
 
 class ABCArticulation(ABCToken):
@@ -110,25 +159,64 @@ class ABCArticulation(ABCToken):
     ABCArticulations precede a note or chord,
     they are a property of that note/chord.
     '''
-    def __init__(self, src=''):
-        super().__init__(src)
-
+    REGEX = '[\.]|!staccato!|!upbow!|!upbow!|!>!|!emphasis!|!accent!|!straccent!|!tenuto!'
+    M21_CLASSES = {
+        '.': articulations.Staccato,
+        '!staccato!': articulations.Staccato,
+        '!downbow!': articulations.DownBow,
+        '!upbow!': articulations.UpBow,
+        '!>!': articulations.Accent,
+        '!emphasis!': articulations.Accent,
+        '!accent!': articulations.Accent,
+        '!straccent!': articulations.StrongAccent,
+        '!tenuto!':articulations.Tenuto,
+    }
     def m21Object(self) -> articulations.Articulation:
-        return None
+        return ABCArticulation.M21_CLASSES[self.src]()
 
 
 class ABCExpression(ABCToken)  :
     '''
     Base class of abc note expresssion token
     '''
-    def __init__(self, src=''):
-        super().__init__(src)
+    REGEX = 'r!fermata!|!trill!'
 
+    M21_CLASSES = {
+        '!fermata!': expressions.Fermata,
+        '!trill!' : expressions.Trill,
+    }
     def m21Object(self) -> expressions.Expression:
-        return None
+        return ABCExpression.M21_CLASSES[self.src]()
 
 
-class ABCDirective(ABCMark):
+class ABCLowerMordent(ABCExpression):
+    '''
+    Lower mordent is a single rapid alternation with
+    the note below
+    '''
+    REGEX = r'!lowermordent!|!mordent!'
+
+    def m21Object(self) -> expressions.Mordent:
+        mordent = expressions.Mordent()
+        mordent.direction = 'down'
+        return mordent
+
+
+class ABCUpperMordent(ABCExpression):
+    '''
+    Upper mordent is a single rapid alternation with
+    the note above
+    '''
+
+    REGEX = r'!uppermordent!|!pralltriller!'
+
+    def m21Object(self) -> expressions.Mordent:
+        mordent = expressions.Mordent()
+        mordent.direction = 'up'
+        return mordent
+
+
+class ABCDirective(ABCToken):
     """
     Dynamic mark
     """
@@ -156,11 +244,30 @@ class ABCField(ABCToken):
     'I'
     >>> md.data
     'linebreak'
+    >>> md.name
+    'instruction'
     '''
 
     # given a logical unit, create an object
     # may be a chord, notes, metadata, bars
-    REGEX = r'^[A-Zmsrsw]:[^|].*(\n[+]:[^|].*)*'
+    KEY_NAMES = {
+            'A': 'area',
+            'B': 'books',
+            'C': 'composer',
+            'I': 'instruction',
+            'K': 'key',
+            'L': 'unit_note_length',
+            'M': 'meter',
+            'O': 'origin',
+            'Q': 'tempo',
+            'T': 'title',
+            'U': 'user_defined',
+            'V': 'voice',
+            'w': 'words',
+            'X': 'reference_number',
+    }
+
+    REGEX = r'^[%s]:[^|].*(\n[+]:[^|].*)*' % "".join(KEY_NAMES.keys())
 
     def __init__(self, src: str):
         '''
@@ -205,135 +312,56 @@ class ABCField(ABCToken):
         self.tag: str = parts[0].strip()
         self.data: str = parts[1].strip()
 
-    def isLyric(self) -> bool:
-        return self.tag == 'w'
+    @property
+    def name(self) -> str:
+        return ABCField.KEY_NAMES[self.tag]
 
-    def isUserDefinedSymbol(self) -> bool:
-        return self.tag == 'U'
+    def value(self):
+        return getattr(self, f'get_{self.name}')()
 
-    def isDefaultNoteLength(self) -> bool:
-        '''
-        Returns True if the tag is "L", False otherwise.
-        '''
-        return self.tag == 'L'
+    def get_reference_number(self) -> str:
+        return self.data
 
-    def isReferenceNumber(self) -> bool:
-        '''
-        Returns True if the tag is "X", False otherwise.
-
-        >>> x = abcFormat.ABCMetadata('X:5')
-        >>> x.tag
-        'X'
-        >>> x.isReferenceNumber()
-        True
-        '''
-        return self.tag == 'X'
-
-    def isMeter(self) -> bool:
-        '''
-        Returns True if the tag is "M" for meter, False otherwise.
-        '''
-        return self.tag == 'M'
-
-    def isTitle(self) -> bool:
-        '''
-        Returns True if the tag is "T" for title, False otherwise.
-        '''
-        return self.tag == 'T'
-
-    def isComposer(self) -> bool:
-        '''
-        Returns True if the tag is "C" for composer, False otherwise.
-        '''
-        return self.tag == 'C'
-
-    def isOrigin(self) -> bool:
-        '''
-        Returns True if the tag is "O" for origin, False otherwise.
-        This value is set in the Metadata `localOfComposition` of field.
-        '''
-        return self.tag == 'O'
-
-    def isVoice(self) -> bool:
-        '''
-        Returns True if the tag is "V", False otherwise.
-        '''
-        return self.tag == 'V'
-
-    def isKey(self) -> bool:
-        '''
-        Returns True if the tag is "K", False otherwise.
-        Note that in some cases a Key will encode clef information.
-
-        (example from corpus: josquin/laDeplorationDeLaMorteDeJohannesOckeghem.abc)
-        '''
-        return self.tag == 'K'
-
-    def isTempo(self) -> bool:
-        '''
-        Returns True if the tag is "Q" for tempo, False otherwise.
-        '''
-        return self.tag == 'Q'
-
-    def isSymbolLine(self) -> bool:
-        '''
-        Returns True if the tag is "Q" for tempo, False otherwise.
-        '''
-        return self.tag == 's'
-
-    def getVoiceId(self) -> str:
+    def get_voice(self) -> Tuple[str, Optional[str]]:
         try:
-            vid, _ = self.data.split(' ', 1)
-        except:
-            return self.data
+            id, data = self.data.split(' ', 1)
+            return id, data
+        except ValueError:
+            return self.data, None
 
-        return vid
+    def get_title(self) -> str:
+        return self.src
 
-    def getSymbolLine(self) -> List[str]:
-        '''
-        >>> am = abcFormat.ABCMetadata('w:Si- - - - - - - cut ro *  -  -  sa')
-        >>> am.getLyric()
-        ['Si-', '-', '-', '-', '-', '-', '-', 'cut', 'ro', '*', '-', '-', 'sa']
-        >>> am = abcFormat.ABCMetadata('w:Ha-ho')
-        >>> am.getLyric()
-        ['Ha-', 'ho']
-        '''
+    def get_words(self) -> List[str]:
         return [s.strip() for s in RE_ABC_LYRIC.findall(self.data)]
 
-    def getLyric(self) -> List[str]:
-        '''
-        >>> am = abcFormat.ABCMetadata('w:Si- - - - - - - cut ro *  -  -  sa')
-        >>> am.getLyric()
-        ['Si-', '-', '-', '-', '-', '-', '-', 'cut', 'ro', '*', '-', '-', 'sa']
-        >>> am = abcFormat.ABCMetadata('w:Ha-ho')
-        >>> am.getLyric()
-        ['Ha-', 'ho']
-        '''
-        return [s.strip() for s in RE_ABC_LYRIC.findall(self.data)]
-
-    def getUserDefinedSymbol(self) -> Tuple[str, ABCToken]:
-        '''
-        >>> am = abcFormat.ABCMetadata('U:Z=!trill!')
-        >>> am.getUserDefinedSymbol()
-        ('Z', 'ABCTrill')
-        >>> am = abcFormat.ABCMetadata('U:Z=!garbage!')
-        >>> am.getUserDefinedSymbol()
-        ('Z', None)
-        '''
-        if not (self.isUserDefinedSymbol()):
-            raise ABCTokenException(
-                'no user defined symbol is associated with this metadata.')
-
+    def get_user_defined(self) -> Tuple[str, ABCToken]:
         symbol, definition = self.data.split('=', 1)
-        # get token
         m = abcTokenizer(definition)
         if len(m) > 1:
-            raise ABCTokenException(f'Got more than one token in the user defined symob "{self.src}"')
-        r = symbol, m.lastgroup
-        return r
+            raise ABCTokenException(f'Got more than one token in the user defined symbols "{self.src}"')
+        return symbol, m
 
+    def get_instruction(self):
+        k, v = self.data.split(' ', 1)
+        return k, v.strip()
 
-    def getTimeSignatureParameters(self) -> Optional[Tuple[List[int], int, str]]:
+    def isInstruction(self):
+        return self.tag == 'I'
+
+    def isReferenceNumber(self):
+        return self.tag == 'X'
+
+    def isKey(self):
+        return self.tag == 'K'
+
+    def isVoice(self):
+        return self.tag == 'V'
+
+    def isUserDefined(self):
+        return 'U' == self.tag
+
+    def _getTimeSignatureParameters(self) -> Optional[Tuple[List[int], int, str]]:
         """
         If there is a time signature representation available,
         get a numerator, denominator and an abbreviation symbol.
@@ -415,7 +443,7 @@ class ABCField(ABCToken):
             denom = int(common.getNumFromStr(denom.strip())[0]) if denom else 1
             return num, denom, 'normal'
 
-    def getTimeSignatureObject(self) -> Optional['music21.meter.TimeSignature']:
+    def get_meter(self) -> Optional['music21.meter.TimeSignature']:
         '''
         Return a music21 :class:`~music21.meter.TimeSignature`
         object for this metadata tag, if isMeter is True, otherwise raise exception.
@@ -461,7 +489,7 @@ class ABCField(ABCToken):
             ts.symbol = symbol
             return ts
 
-    def getKeySignatureParameters(self) -> Tuple[str, str, List[str]]:
+    def _getKeySignatureParameters(self) -> Tuple[str, str, List[str]]:
         # noinspection SpellCheckingInspection
         '''
         Extract key signature parameters, include indications for mode,
@@ -622,7 +650,7 @@ class ABCField(ABCToken):
 
         return (tonic, mode, [f"{n}{a}" for n, a in accidentals.items()])
 
-    def getKeySignatureObject(self) -> 'music21.key.KeySignature':
+    def get_key(self) -> 'music21.key.KeySignature':
         # noinspection SpellCheckingInspection,PyShadowingNames
         '''
         Return a music21 :class:`~music21.key.KeySignature` or :class:`~music21.key.Key`
@@ -722,7 +750,7 @@ class ABCField(ABCToken):
 
         return ks
 
-    def getClefObject(self) -> Tuple[Optional['music21.clef.Clef'], Optional[int]]:
+    def get_clef(self) -> Tuple[Optional['music21.clef.Clef'], Optional[int]]:
         '''
         Extract any clef parameters stored in the key metadata token.
         Assume that a clef definition suggests a transposition.
@@ -780,7 +808,7 @@ class ABCField(ABCToken):
         return None, None
         # if not defined, returns None, None
 
-    def getMetronomeMarkObject(self) -> Optional['music21.tempo.MetronomeMark']:
+    def get_tempo(self) -> Optional['music21.tempo.MetronomeMark']:
         '''
         Extract any tempo parameters stored in a tempo metadata token.
 
@@ -858,7 +886,7 @@ class ABCField(ABCToken):
         # returns None if not defined
         return mmObj
 
-    def getDefaultQuarterLength(self) -> Optional[float]:
+    def get_default_note_length(self) -> Optional[float]:
         r'''
         If there is a quarter length representation available, return it as a floating point value
 
@@ -915,6 +943,43 @@ class ABCInlineField(ABCField):
 
         if self.tag not in 'IKLMmNPQRrUV':
             raise ABCTokenException(f'Field tag "{self.tag}" cannot inlined.')
+
+class ABCSymbol()
+
+class ABCBrokenRhythm(ABCToken):
+    '''
+    Brokenrhythm is binary operator for two chord or note token to the
+    left and right hand side of the BrokenRythm.
+    It decreases the length of one note by a factor and increases the length of
+    the second note by the inverse of the factor.
+
+    Assign the two notes with set_notes, the brokenRythmModifier property of the
+    note/chord is set.
+    '''
+
+    REGEX = r'[>]+|[<]+'
+
+    def __init__(self, src: str):
+        super().__init__(src)
+        self.left, self.right = {'>': (1.5, 0.5), '>>': (1.75, 0.25),
+                                 '>>>': (1.875, 0.125), '<': (0.5, 1.5),
+                                 '<<': (0.25, 1.75), '<<<': (0.125, 1.875)
+                                 }.get(self.src, (1, 1))
+
+
+    def set_notes(self, left: 'ABCGeneralNote', right: 'ABCGeneralNote'):
+        '''
+        Set note the length modifier of the the BrokenRythm to the left
+        and right node.
+
+        Arguments:
+            left:
+                Note token to the left of the BrokenRythmMarker
+            right:
+                Note token to the right of the BrokenRythmMarker
+        '''
+        left.brokenRyhtmModifier = self.left
+        right.brokenRyhtmModifier = self.right
 
 
 class ABCBar(ABCToken):
@@ -1215,16 +1280,6 @@ class ABCSpanner(ABCToken):
         return None
 
 
-class ABCDynamic(ABCMark):
-    """
-    Dynamic mark
-    """
-    REGEX = r'![p]{1,4}!|![f]{1,4}!|!m[pf]!|!sfz!'
-
-    def m21Object(self) -> dynamics.Dynamic:
-        return dynamics.Dynamic(self.src)
-
-
 class ABCTie(ABCToken):
     '''
     Handles instances of ties '-' between notes in an ABC score.
@@ -1304,81 +1359,6 @@ class ABCDimonuendo(ABCSpanner):
         return Diminuendo()
 
 
-class ABCStaccato(ABCArticulation):
-    '''
-    ABCStaccato tokens precede a note or chord.
-    they are a property of that note/chord.
-    '''
-    REGEX = '[\.]'
-
-    def m21Object(self) -> articulations.Staccato:
-        from music21.articulations import Staccato
-        return Staccato()
-
-
-class ABCUpbow(ABCArticulation):
-    '''
-    ABCUpbow tokens precede a note or chord;
-    they are a property of that note/chord.
-    '''
-    REGEX = "!upbow!"
-    def m21Object(self) -> articulations.UpBow:
-        from music21.articulations import UpBow
-        return UpBow()
-
-
-class ABCDownbow(ABCArticulation):
-    '''
-    ABCDowmbow tokens precede a note or chord;
-    they are a property of that note/chord.
-    '''
-    REGEX = "!downbow!"
-    def m21Object(self) -> articulations.DownBow:
-        from music21.articulations import DownBow
-        return DownBow()
-
-
-class ABCAccent(ABCArticulation):
-    '''
-    ABCAccent tokens "K" precede a note or chord;
-    they are a property of that note/chord.
-    These appear as ">" in the output.
-    '''
-    REGEX = "!accent!|!>!|!emphasis!"
-    def m21Object(self) -> articulations.Accent:
-        from music21.articulations import Accent
-        return Accent()
-
-
-class ABCStraccent(ABCArticulation):
-    '''
-    ABCStraccent tokens "k" precede a note or chord;
-    they are a property of that note/chord.
-    These appear as "^" in the output.
-
-    @TODO: Cannot find this !straccent not 'k' in ABC dokumentation
-    '''
-    # regular expression
-    REGEX = r'!straccent!'
-
-    def m21Object(self) -> articulations.StrongAccent:
-        from music21.articulations import StrongAccent
-        return StrongAccent()
-
-
-class ABCTenuto(ABCArticulation):
-    '''
-    ABCTenuto tokens "M" precede a note or chord;
-    they are a property of that note/chord.
-    '''
-    # regular expression
-    REGEX = r'!tenuto!'
-
-    def m21Object(self) -> articulations.Tenuto:
-        from music21.articulations import Tenuto
-        return Tenuto()
-
-
 class ABCGraceStart(ABCToken):
     '''
     Grace note start
@@ -1391,179 +1371,6 @@ class ABCGraceStop(ABCToken):
     Grace note end
     '''
     REGEX = r'}'
-
-
-class ABCTrill(ABCExpression):
-    '''
-    Trill
-    '''
-    # regular expression
-    REGEX= '!trill!'
-
-    def m21Object(self) -> expressions.Trill:
-        return expressions.Trill()
-
-
-class ABCRoll(ABCToken):
-    '''
-    Irish Roll (Not Supported ?)
-    '''
-    pass
-
-
-class ABCFermata(ABCExpression):
-    '''
-    Fermata expression
-    '''
-    REGEX = 'r!fermata!'
-
-    def m21Object(self) -> expressions.Fermata:
-        from music21.expressions import Expression
-        return Fermata()
-
-
-class ABCLowerMordent(ABCExpression):
-    '''
-    Lower mordent is a single rapid alternation with
-    the note below
-    '''
-    REGEX = r'!lowermordent!|!mordent!'
-
-    def m21Object(self) -> expressions.Mordent:
-        mordent = expressions.Mordent()
-        mordent.direction = 'down'
-        return mordent
-
-
-class ABCUpperMordent(ABCExpression):
-    '''
-    Upper mordent is a single rapid alternation with
-    the note above
-    '''
-
-    REGEX = r'!uppermordent!|!pralltriller!'
-
-    def m21Object(self) -> expressions.Mordent:
-        mordent = expressions.Mordent()
-        mordent.direction = 'up'
-        return mordent
-
-
-class ABCCoda(ABCMark):
-    '''
-    Coda score expression marker
-    '''
-    # token matched by this regular expression
-    REGEX = r'!coda!'
-
-    def m21Object(self) -> repeat.Coda:
-        from music21 import repeat
-        return repeat.Coda()
-
-
-class ABCSegno(ABCMark):
-    '''
-    Segno score expressiion marker
-    '''
-    # token matched by this regular expression
-    REGEX = r'!segno!'
-
-    def m21Object(self) -> 'music21.repeat.Segno':
-        """
-        return:
-            music21 object corresponding to the token
-        """
-        from music21 import repeat
-        return repeat.Segno()
-
-
-class ABCSymbol(ABCToken):
-    """
-        Redefinable symbols '[H-Wh-w~]'
-    """
-    REGEX = r'[H-Wh-w~]'
-
-    DEFAULTS = {
-        # '~': 'ABCIrishRoll',
-        'H': 'ABCFermata',
-        'L': 'ABCAccent',
-        'M': 'ABCLowerMordent',
-        'O': 'ABCCode',
-        'P': 'ABCUpperMordent',
-        'S': 'ABCSegno',
-        'T': 'ABCTrill',
-        'k': 'ABCStraccent',  # Not in recent ABC Standart ?!
-        'K': 'ABCAccent',  # Nor this
-        'u': 'ABCUpbow',
-        'v': 'ABCDownbow'
-    }
-
-    def __init__(self, src: str):
-        super().__init__(src)
-        self.symbols = Optional[Dict: str, ABCToken]
-
-    def lookup(self, userDefinition: Dict):
-        return userDefinition.get(self.src, ABCSymbol.DEFAULTS[self.src])
-
-
-class ABCBrokenRhythm(ABCToken):
-    '''
-    Brokenrhythm is binary operator for two chord or note token to the
-    left and right hand side of the BrokenRythm.
-    It decreases the length of one note by a factor and increases the length of
-    the second note by the inverse of the factor.
-
-    Assign the two notes with set_notes, the brokenRythmModifier property of the
-    note/chord is set.
-    '''
-
-    REGEX = r'[>]+|[<]+'
-
-    def __init__(self, src: str):
-        super().__init__(src)
-        self.left, self.right = {'>': (1.5, 0.5), '>>': (1.75, 0.25),
-                                 '>>>': (1.875, 0.125), '<': (0.5, 1.5),
-                                 '<<': (0.25, 1.75), '<<<': (0.125, 1.875)
-                                 }.get(self.src, (1, 1))
-
-
-    def set_notes(self, left: 'ABCGeneralNote', right: 'ABCGeneralNote'):
-        '''
-        Set note the length modifier of the the BrokenRythm to the left
-        and right node.
-
-        Arguments:
-            left:
-                Note token to the left of the BrokenRythmMarker
-            right:
-                Note token to the right of the BrokenRythmMarker
-        '''
-        left.brokenRyhtmModifier = self.left
-        right.brokenRyhtmModifier = self.right
-
-
-class ABCChordSymbol(ABCMark):
-    '''
-    A chord symbol
-    '''
-    REGEX = r'"[^"]*"'
-
-    def __init__(self, src):
-        src = src[1:-1].strip()
-        src = re.sub('[()]', '', src)
-        super().__init__(src)
-
-    def m21Object(self):
-        from music21 import harmony
-        cs_name = common.cleanedFlatNotation(self.src)
-        try:
-            if cs_name in ('NC', 'N.C.', 'No Chord', 'None'):
-                cs = harmony.NoChord(cs_name)
-            else:
-                cs = harmony.ChordSymbol(cs_name)
-            return cs
-        except ValueError:
-            return None
 
 
 class ABCGeneralNote(ABCToken):
@@ -1645,7 +1452,7 @@ class ABCGeneralNote(ABCToken):
         return:
                 length modifier als float.
         '''
-        if src is None:
+        if not src:
             return 1.0
         if src == '/':
             return 0.5
@@ -2135,7 +1942,7 @@ class ABCChord(ABCGeneralNote):
 
 
 TOKEN_SPEC = {}
-for token_base_class in [ABCMark, ABCAccent, ABCArticulation, ABCExpression]:
+for token_base_class in [ABCToken]:
     for token_class in token_base_class.__subclasses__():
         if token_class is not token_base_class:
             if not hasattr(token_class, 'REGEX'):
@@ -2156,7 +1963,7 @@ TOKEN_SPEC = {
     'COMMENT': ('[ ]*%.*$', None),
 }
 
-def register_token_class(token_class: Type, recursive: bool = True):
+def register_token_class(token_class: Type[ABCToken], recursive: bool = True):
     if token_class not in [ABCToken, ABCMark, ABCArticulation, ABCExpression,
                            ABCSpanner, ABCParenStop, ABCGeneralNote]:
         if issubclass(token_class, ABCSpanner):
@@ -2232,7 +2039,7 @@ def abcTokenizer(src: str, abcVersion=None) -> List[ABCToken]:
             try:
                 tokens.append(token_class(src=value))
             except Exception as e:
-                raise ABCHandlerException(f'Creating token [{token_class}] failed.\n{e}')
+                raise ABCTokenException(f'Creating token [{token_class}] failed.\n{e}')
         else:
             environLocal.printDebug(
                 [f'No token class for rule "{rule}" with matching regex "{regex}"'])
