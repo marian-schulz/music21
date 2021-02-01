@@ -25,7 +25,7 @@ class ABCHandler():
                 Version of the ABC Format
         """
         self.abc_version = abc_version
-        self._user_defined = {}
+        self.user_defined = {}
 
         if isinstance(src, str):
             if abc_version is None:
@@ -81,7 +81,7 @@ class ABCHandler():
             if isinstance(token, ABCSymbol):
                 try:
                     # there are maybe more than one token in the definition
-                    token = ABCSymbol.lookup(self._user_defined)
+                    token = token.lookup(self.user_defined)
                 except KeyError:
                     environLocal.printDebug(['ABCSymbol "{self.src}" without definition found.'])
                     continue
@@ -89,20 +89,18 @@ class ABCHandler():
             # Each ABCToken should have his own rule method
             # @TODO: Token without p_<token> method should proccesed by
             # p_ABCToken
-            method = f'p_{token.__class__.__name__}'
-            try:
-                method = getattr(self, method, None)
-                if method is not None:
-                    result = method(token)
-                    if result is None:
-                        # Absolute ok, if this method is not relevant anymore
-                        environLocal.printDebug([f'Method "{method}" returns "None"'])
-                        continue
+            method_name = f'p_{token.__class__.__name__}'
+            method = getattr(self, method_name, None)
+            if method is not None:
+                result = method(token)
+                if result is None:
+                    # Absolute ok, if this token is not relevant anymore
+                    # environLocal.printDebug([f'Method "{self.__class__.__name__}.{method_name}" returns "None"'])
+                    continue
+            else:
+                environLocal.printDebug([f'Method "{self.__class__.__name__}.{method_name}" is not defined'])
+            yield token
 
-                yield token
-            except TypeError:
-                environLocal.printDebug([f'Method "{method}" is not defined'])
-                yield token
 
     def __add__(self, other):
         '''
@@ -123,54 +121,93 @@ class ABCHandler():
         return "\n".join(str(t) for t in self.tokens)
 
 
-class ABCHeader(dict, ABCHandler):
+class ABCFieldMixin():
+    def __init__(self):
+        self.abcDirectives = None
+        self.user_defined = None
+        self.unit_note_length = None
+        self.key = None
+        self.tempo = None
+        self.meter = None
+
+    def p_ABCDirective(self, token: ABCDirective):
+        self.abcDirective[token.key] = token.value
+
+    def p_ABCInstructionField(self, token: ABCInstructionField):
+        k, v = token.get_instruction()
+        self.abcDirective[k] = v
+
+    def p_ABCKeyField(self, token: ABCKeyField):
+        self.key = token.m21Object()
+
+    def p_ABCUserDefinedField(self, token: ABCUserDefinedField):
+        self.user_defined[token.symbol] = token.get_token()
+
+    def p_ABCUnitNoteLengthField(self, token: ABCUnitNoteLengthField):
+        self.unit_note_length = token.get_unit_note_length()
+
+
+class ABCHeader(ABCHandler, ABCFieldMixin):
     """
     The ABCHeader handles ABCToken for headers and manage the
     ABC Heade informations as attribute dictonary
 
     """
 
-    __slots__ = ()
-    __getattr__ = dict.__getitem__
-    __setattr__ = dict.__setitem__
-
     def __init__(self, src: Union[List[ABCToken], str], abc_version=None):
         ABCHandler.__init__(self, src, abc_version)
-        self['abcDirective'] = {}
-        self['user_defined'] = {}
-        self['voice'] = defaultdict(list)
+        self.voice = defaultdict(list)
+        self.metadata = defaultdict(list)
+        self.meter = None
+        self.abcDirectives = {}
+        self.user_defined = {}
+        self.unit_note_length = None
+        self.key = None
+        self.tempo = None
+        # collect voice field with the voice id '*'
         self._all_voices = []
 
-    def p_ABCDirective(self, token: ABCDirective):
-        self['abcDirective'][token.key] = token.value
+    def p_ABCVoiceField(self, token: ABCVoiceField):
+        voice_id, voice_data = token.get_voice()
+        if voice_id:
+            if voice_id == '*':
+                self._all_voices.append(voice_data)
+                for v in self.voices.values():
+                    v.append(voice_data)
+            else:
+                self.voice[voice_id].append(token)
 
-    def p_ABCField(self, token: ABCField):
-        if token.isInstruction():
-            k, v = token.get_instruction()
-            self.abcDirective[k] = v
-        elif token.isVoice():
-            voice_id, data = token.get_voice()
-            if voice_id:
-                if voice_id == '*':
-                    self._all_voices.append(token)
-                    for v in self.voices.values():
-                        v.append(token)
-                else:
-                    self.voice[voice_id].append(token)
-        elif token.isUserDefined():
-            k, v = token.get_user_defined()
-            self.user_defined[k] = v
-        else:
-            self[token.name] = token.value()
+    def p_ABCMeterField(self, token: ABCMeterField):
+        self.meter = token
+
+    def p_ABCField(self, token: ABCKeyField):
+        self.metadata[token.name].append(token.data)
+
+    def p_ABCTempoField(self, token: ABCTempoField):
+        self.tempo = token.m21Object()
 
     def process(self, parent: Optional['ABCHeader']=None):
         if parent:
-            self.update(deepcopy(parent))
+            self.tempo = parent.tempo
+            self.key = parent.key
+            self.tempo = parent.tempo
+            self.meter = parent.meter
+            self.unit_note_length = parent.unit_note_length
+
         super().process()
 
-    def __getattr__(self, attribute):
-        k = list(self.keys())
-        return dict.get(self, attribute, None)
+        if parent:
+            self.abcDirective = dict(parent.abcDirective).update(self.abcDirective)
+            self.user_defined = dict(parent.user_defined).update(self.user_defined)
+            self.metadata = dict(parent.metadata).update(self.metadata)
+
+        if self.meter:
+            if self.unit_note_length is None:
+                self.unit_note_length = self.meter.get_unit_note_length()
+            self.meter = self.meter.get_meter()
+
+        if self.unit_note_length is None:
+            self.unit_note_length = 0.5
 
 
 class ABCBarHandler(ABCHandler):
@@ -194,21 +231,21 @@ class ABCBarHandler(ABCHandler):
     def __iter__(self):
         yield from self._tokens
 
-class ABCVoice(ABCHandler):
+
+class ABCVoice(ABCHandler, ABCFieldMixin):
     """
     The ABCVoiceHandler is for representing and processing melodic tokens
     in a voice.
     """
     def __init__(self, src: Union[List[ABCToken], str], abcVersion: ABCVersion = None):
         super().__init__(src, abcVersion)
+        ABCFieldMixin.__init__(self)
         self.measures: List[ABCBarHandler] = []
 
         # main proccess context variable
-        self._meter = None
-        self._key = None
-        self._abcDirectives = {}
-        self._unit_note_lengthh = None
-        self._user_defined = {}
+        self.abcDirectives = {}
+        self.unit_note_length = None
+        self.user_defined = {}
 
         # additional proccess context variables
         self._lastNote: Optional[ABCGeneralNote] = None
@@ -222,16 +259,17 @@ class ABCVoice(ABCHandler):
         self._activeParens = []
         self._activeSpanners = []
         self._accidentalized = {}
+        self._propagation = self._accidentalPropagation()
 
     def process(self, id: str = '1', tune: Optional['ABCTune'] = None):
         if tune:
             tune_header = tune.header
             # Get default value from the tune header
-            self._meter = tune_header.meter
-            self._key = tune_header.key
-            self._abcDirectives = deepcopy(tune_header.abcDirectives)
-            self._unit_note_length = tune_header.unit_note_length
-            self._user_defined = dict(tune_header.user_defined)
+            self.meter = tune_header.meter
+            self.key = tune_header.key
+            self.abcDirectives = deepcopy(tune_header.abcDirectives)
+            self.unit_note_length = tune_header.unit_note_length
+            self.user_defined = dict(tune_header.user_defined)
             # Special processing for voice specific header fields
             self._process_header(tune.header.voice.get(id, []))
 
@@ -260,15 +298,37 @@ class ABCVoice(ABCHandler):
             # @TODO: needs implementation
             pass
 
-    def p_ABCToken(self, token: ABCToken):
+    def _accidentalPropagation(self) -> str:
+        '''
+        Determine how accidentals should 'carry through the measure.'
+
+        >>> ah = abcFormat.ABCHandler(abcVersion=(1, 3, 0))
+        >>> ah._accidentalPropagation()
+        'not'
+        >>> ah = abcFormat.ABCHandler(abcVersion=(2, 0, 0))
+        >>> ah._accidentalPropagation()
+        'pitch'
+        '''
+        MIN_ABC_VERSION = (2, 0, 0)
+        if not self.abc_version or self.abc_version < MIN_ABC_VERSION:
+            return 'not'
+        if 'propagate-accidentals' in self.abcDirectives:
+            return self.abcDirectives['propagate-accidentals']
+        return 'pitch'  # Default per abc 2.1 standard
+
+    def p_ABCMeterField(self, token: ABCMeterField):
+        self.meter = token.m21Object()
+        return token
+
+    def p_ABCTempoField(self, token: ABCTempoField):
         return token
 
     def p_GeneralNote(self, token: ABCGeneralNote):
         """
             process a
         """
-        token.activeDefaultQuarterLength = self._unit_note_length
-        token.activeKeySignature = self._key
+        token.activeDefaultQuarterLength = self.unit_note_length
+        token.activeKeySignature = self.key
         token.applicableSpanners = self._activeSpanners[:]
 
         # Attached the collected articulations to notes & chords
@@ -302,7 +362,7 @@ class ABCVoice(ABCHandler):
 
     def p_ABCChord(self, token: ABCChord):
         self.p_GeneralNote(token)
-        token.subTokens = list(super().process(token.subTokens))
+        token.subTokens = list(super()._process_tokens(token.subTokens))
         return token
 
     def p_ABCRest(self, token):
@@ -329,14 +389,14 @@ class ABCVoice(ABCHandler):
 
     def p_ABCField(self, token: ABCField):
         # @TODO: special cases like user_defined
-        setattr(self, f'_{token.name}', token.value())
+        pass
 
     def p_ABCBrokenRhythm(self, token: ABCBrokenRhythm):
         if self._lastNote:
             self.lastBrokenRythm = token
 
     def p_ABCTuplet(self, token: ABCTuplet):
-        token.updateRatio(self._meter)
+        token.updateRatio(self.meter)
         token.updateNoteCount()
         self._lastTuplet = token
         self._activeParens.append('Tuplet')
@@ -384,7 +444,8 @@ class ABCVoice(ABCHandler):
         self._lastBarToken = token
 
     def p_ABCDirective(self, token: ABCDirective):
-        self._abcDirectives[token.key] = token.value
+        self.abcDirectives[token.key] = token.value
+        self._propagation = self._accidentalPropagation()
 
     def __len__(self):
         return len(self._tokens) + len(self.header)
@@ -434,7 +495,7 @@ class ABCTune(ABCHandler):
         for token in tokenIter:
             if isinstance(token, ABCField):
                 header.append(token)
-                if token.isKey():
+                if token.name == 'key':
                     # Stop, regular end of the tune header
                     break
             elif isinstance(token, ABCDirective):
@@ -456,16 +517,15 @@ class ABCTune(ABCHandler):
         voices = { '1': active_voice }
 
         for token in tokens:
-            if isinstance(token, ABCField):
-                if token.isVoice():
-                    voice_id, _ = token.get_voice()
-                    if voice_id:
-                        if voice_id in voices:
-                            active_voice = voices[voice_id]
-                        else:
-                            active_voice = []
-                            voices[voice_id] = active_voice
-                    continue
+            if isinstance(token, ABCVoiceField):
+                voice_id = token.voice_id()
+                if voice_id:
+                    if voice_id in voices:
+                        active_voice = voices[voice_id]
+                    else:
+                        active_voice = []
+                        voices[voice_id] = active_voice
+                continue
             active_voice.append(token)
         return voices
 
@@ -537,8 +597,9 @@ class ABCTuneBook(ABCHandler):
                 elif token.isReferenceNumber():
                     # regular end of the tunebook and start of the first tune
                     active_tune = [token]
-                    tunes[token.get_reference_number()] = active_tune
+                    tunes[token.data] = active_tune
                     break
+
             # Some tokens not belonging to a tune book header
             if strict_abc:
                 raise ABCHandlerException(f'Irregular header field "{token.tag}" in Tunebook.')
@@ -567,13 +628,10 @@ class ABCTuneBook(ABCHandler):
             tune.process()
 
     def __len__(self):
-        return sum(len(t) for t in self.tunes.values()) + len(self.header)
+        return len(self.tunes)
 
     def __iter__(self):
-        yield from self.header.tokens
-
-        for tune in self.tunes.values():
-            yield from tune
+        yield from self.tunes.values()
 
     def __str__(self):
         return '\n'.join(str(t) for t in self)
@@ -589,47 +647,126 @@ from music21 import spanner
 from music21 import harmony
 from music21 import metadata
 
-def append_tokens(handler: ABCHandler, s: stream.Stream):
+def append_tokens(handler: ABCHandler, input: Union[stream.Part, stream.Measure]):
     for token in handler.tokens:
-        m21obj = token.m21Object()
+        try:
+            m21obj = token.m21Object()
+        except Exception as e:
+            raise Exception(f'Token {token} raised Exception {e}')
         if m21obj is None:
             environLocal.printDebug(f'Got no m21Object from "{token}".')
         else:
-            s.append(m21obj)
+            input.append(m21obj)
 
-def translate(src: str):
-    abcVersion = parseABCVersion(src)
-    tune_book = ABCTuneBook(src, abcVersion)
+
+def abc_to_stream(abc: [str, ABCTuneBook], abc_version = None) -> Union[stream.Score, stream.Opus]:
+    """
+    Convert an abc tune book or abc tune into a music21 opus or score stream.
+    If there is just one tune avaiable it returns always a score stream.
+
+    Arguments:
+        abc:
+            ABC code or ABCTuneBook handler to convert
+    """
+    if isinstance(abc, ABCTuneBook):
+        tune_book = abc
+    else:
+        tune_book = ABCTuneBook(abc, abc_version)
+
     tune_book.process()
-    m21streams = []
+
+    if len(tune_book) == 1:
+        return abc_tune_to_score(list(tune_book.tunes.values())[0])
+    else:
+        return abc_tune_book_to_opus(abc)
+
+
+def abc_header_to_metadata(header: ABCHeader):
+    """
+    convert an processed ABCHeader handler into an music21 metadata object
+    """
+    md = metadata.Metadata()
+    header_md = header.metadata
+    if header_md['reference_number']:
+        md.number = header_md['reference_number'][0]
+    if header.metadata['title']:
+        md.title = header_md['title'][0]
+        md.alternativeTitle = ", ".join(header_md['title'][1:])
+    else:
+        md.title = 'unknown'
+
+    md.composers = header_md['composer']
+    md.localeOfComposition = ", ".join(header_md['origin'] + header_md['area'])
+    return  md
+
+
+def abc_tune_book_to_opus(tune_book: ABCTuneBook) -> Union[stream.Opus, stream.Score]:
+    """
+    Arguments:
+        tune_book: An processed ABCTuneBook handler
+    """
+    opus = stream.Opus()
+    md = abc_header_to_metadata(tune_book.header)
+    opus.insert(0, md)
+
     for tune in tune_book.tunes.values():
-        m21tune_score = stream.Score()
-        m21tune_score.insert(0, metadata.Metadata())
+        opus.append(abc_tune_to_score(tune))
 
-        if tune.header.title:
-            m21tune_score.metadata.title = tune.header.title
-        if tune.header.composer:
-            m21tune_score.metadata.composer = tune.header.composer
+    return opus
 
 
-        for voice in tune.voices.values():
-            m21part = stream.Part()
-            if voice.measures:
-                for measure in voice.measures:
-                    m21measure = stream.Measure()
-                    append_tokens(measure, m21measure)
-                    m21part.append(m21measure)
+def abc_tune_to_score(tune: ABCTune) -> stream.Score:
+    """
+    Convert an abc tune into a music21 score.
 
-            elif voice.tokens:
-                append_tokens(voice, m21part)
-            else:
-                environLocal.printDebug('Voice has no tokens or measures')
+    Arguments:
+        tune: An processed ABCTune handler
+    """
+    score = stream.Score()
+    md = abc_header_to_metadata(tune.header)
+    score.insert(0, md)
 
-            m21tune_score.append(m21part)
-        m21tune_score.show()
-    return tune_book
 
+    for voice_id in tune.voices:
+        score.append(abc_voice_to_part(voice_id, tune))
+
+    # Insert tempo mark in the firs part
+    if tune.header.tempo:
+        score.parts[0].insert(0, tune.header.tempo)
+
+
+    return score
+
+def abc_voice_to_part(voice_id: str, tune: ABCTune) -> stream.Score:
+    """
+    Convert an abc voice or single body into a music21 part.
+    Arguments:
+
+        tune: ABCTune handler of the voice
+        : insert score in an opus stream (optional)
+    """
+    part = stream.Part()
+    voice = tune.voices[voice_id]
+    if tune.header.key:
+        part.insert(0, tune.header.key)
+    if tune.header.meter:
+        part.insert(0, tune.header.meter)
+
+    if voice.tokens:
+        append_tokens(voice, part)
+    elif voice.measures:
+        for measure in voice.measures:
+            m21_measure = stream.Measure()
+            append_tokens(measure, part)
+
+    return part
 
 if __name__ == '__main__':
     from music21.abcFormat import testFiles
-    translate(testFiles.fyrareprisarn)
+
+    from pathlib import Path
+    with Path('/home/mschulz/Dokumente/midi2csv/midi/bwv1052a.mid.abc').open() as f:
+        bwv1052 = f.read()
+
+    s = abc_to_stream(testFiles.hectorTheHero)
+    s.show()

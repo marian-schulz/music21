@@ -3144,8 +3144,6 @@ def mergeLeadingMetaData(barHandlers: List[ABCHandlerBar]) -> List[ABCHandlerBar
 
 
 # ------------------------------------------------------------------------------
-
-
 class ABCFile(prebase.ProtoM21Object):
     '''
     ABC File or String access
