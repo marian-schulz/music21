@@ -265,6 +265,7 @@ class ABCField(ABCToken):
             'V': 'voice',
             'w': 'words',
             'X': 'reference_number',
+            'R': 'rhythm'
     }
 
     REGEX = r'^[%s]:[^|].*(\n[+]:[^|].*)*' % "".join(KEY_NAMES.keys())
@@ -317,7 +318,10 @@ class ABCField(ABCToken):
         return ABCField.KEY_NAMES[self.tag]
 
     def value(self):
-        return getattr(self, f'get_{self.name}')()
+        try:
+            return getattr(self, f'get_{self.name}')()
+        except AttributeError:
+            return self.data
 
     def get_reference_number(self) -> str:
         return self.data
@@ -328,9 +332,6 @@ class ABCField(ABCToken):
             return id, data
         except ValueError:
             return self.data, None
-
-    def get_title(self) -> str:
-        return self.src
 
     def get_words(self) -> List[str]:
         return [s.strip() for s in RE_ABC_LYRIC.findall(self.data)]
@@ -346,20 +347,23 @@ class ABCField(ABCToken):
         k, v = self.data.split(' ', 1)
         return k, v.strip()
 
-    def isInstruction(self):
+    def isInstruction(self) -> bool:
         return self.tag == 'I'
 
-    def isReferenceNumber(self):
+    def isReferenceNumber(self) -> bool:
         return self.tag == 'X'
 
-    def isKey(self):
+    def isKey(self) -> bool:
         return self.tag == 'K'
 
-    def isVoice(self):
+    def isVoice(self) -> bool:
         return self.tag == 'V'
 
     def isUserDefined(self):
         return 'U' == self.tag
+
+    def isMeter(self) -> bool:
+        return self.tag == 'M'
 
     def _getTimeSignatureParameters(self) -> Optional[Tuple[List[int], int, str]]:
         """
@@ -479,7 +483,7 @@ class ABCField(ABCToken):
             raise ABCTokenException(
                 'no time signature associated with this non-metrical metadata.')
         from music21 import meter
-        parameters = self.getTimeSignatureParameters()
+        parameters = self._getTimeSignatureParameters()
 
         if parameters is None:
             return None
@@ -716,7 +720,7 @@ class ABCField(ABCToken):
             raise ABCTokenException('no key signature associated with this metadata')
 
         from music21 import key
-        tonic, mode, accidentals = self.getKeySignatureParameters()
+        tonic, mode, accidentals = self._getKeySignatureParameters()
 
         if mode and tonic:
             ks: key.KeySignature = key.Key(tonic, mode)
@@ -833,7 +837,7 @@ class ABCField(ABCToken):
         <music21.tempo.MetronomeMark maestoso Quarter=90.0>
 
         '''
-        if not self.isTempo():
+        if self.tag != 'Q':
             raise ABCTokenException('no tempo associated with this metadata')
         mmObj = None
         from music21 import tempo
@@ -886,7 +890,7 @@ class ABCField(ABCToken):
         # returns None if not defined
         return mmObj
 
-    def get_default_note_length(self) -> Optional[float]:
+    def get_unit_note_length(self) -> Optional[float]:
         r'''
         If there is a quarter length representation available, return it as a floating point value
 
@@ -903,7 +907,7 @@ class ABCField(ABCToken):
         >>> sc.flat.notes[0].duration.type
         'quarter'
         '''
-        if self.isDefaultNoteLength() and '/' in self.data:
+        if self.tag =='L' and '/' in self.data:
             # should be in L:1/4 form
             n, d = self.data.split('/')
             n = int(n.strip())
@@ -930,9 +934,6 @@ class ABCField(ABCToken):
             raise ABCTokenException(
                 f'no quarter length associated with this metadata: {self.data}')
 
-    def __str__(self):
-        return f"{self.tag}:{self.data}"
-
 
 class ABCInlineField(ABCField):
 
@@ -944,7 +945,31 @@ class ABCInlineField(ABCField):
         if self.tag not in 'IKLMmNPQRrUV':
             raise ABCTokenException(f'Field tag "{self.tag}" cannot inlined.')
 
-class ABCSymbol()
+
+class ABCSymbol(ABCToken):
+    """
+        Redefinable symbols '[H-Wh-w~]'
+    """
+    REGEX = r'[H-Wh-w~]'
+
+    DEFAULTS = {
+        # '~': 'ABCIrishRoll',
+        'H': 'ABCFermata',
+        'L': 'ABCAccent',
+        'M': 'ABCLowerMordent',
+        'O': 'ABCCode',
+        'P': 'ABCUpperMordent',
+        'S': 'ABCSegno',
+        'T': 'ABCTrill',
+        'k': 'ABCStraccent',  # Not in recent ABC Standart ?!
+        'K': 'ABCAccent',  # Nor this
+        'u': 'ABCUpbow',
+        'v': 'ABCDownbow'
+    }
+
+    def lookup(self, user_defined: Dict[str, ABCToken]):
+        return user_defined.get(self.src, ABCSymbol.DEFAULTS[self.src])
+
 
 class ABCBrokenRhythm(ABCToken):
     '''
@@ -1813,7 +1838,7 @@ class ABCChord(ABCGeneralNote):
     # Regular expression matching an ABCHord token
     REGEX = r'[\[][^\]]*[\]][0-9]*[/]*[0-9]*'
 
-    def __init__(self, src:str, parent_handler: Optional['ABCHandler']=None, defaultQuarterLength: float=0.5):
+    def __init__(self, src:str, defaultQuarterLength: float=0.5):
         """
         argument:
             src:
@@ -2020,15 +2045,15 @@ def abcTokenizer(src: str, abcVersion=None) -> List[ABCToken]:
         value = m.group()
 
         # Some barlines are replaced by multiple tokens
-        if rule == 'BARLINE':
+        if rule == 'ABCBar':
             tokens.extend(
                 ABCBar.barlineTokenFilter(value)
             )
             continue
 
         # Tokenize the internal abc string of a Chord
-        if rule == 'CHORD':
-            token = ABCChord(value, parent_handler=self)
+        if rule == 'ABCChord':
+            token = ABCChord(value)
             token.tokenize()
             tokens.append(token)
             continue
