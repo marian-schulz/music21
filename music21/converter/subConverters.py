@@ -1083,17 +1083,13 @@ class ConverterABC(SubConverter):
         :class:`~music21.stream.Opus` object will be returned;
         otherwise, a :class:`~music21.stream.Score` is returned.
         '''
-        from music21 import abcFormat
-        af = abcFormat.ABCFile()
+        #from music21 import abcFormat
+        from music21.abcFormat import handler
+        from music21.abcFormat import translate
+        af = handler.ABCFile()
         # do not need to call open or close
         abcHandler = af.readstr(strData, number=number)
-        # set to stream
-        if abcHandler.definesReferenceNumbers():
-            # this creates an Opus object, not a Score object
-            self.stream = abcFormat.translate.abcToStreamOpus(abcHandler,
-                                                              number=number)
-        else:  # just one work
-            abcFormat.translate.abcToStreamScore(abcHandler, self.stream)
+        return translate.abcToStreamScore(abcHandler, self.stream)
 
     def parseFile(self, fp, number=None):
         '''

@@ -1621,7 +1621,7 @@ class ABCGeneralNote(ABCToken):
         return:
                 length modifier als float.
         '''
-        if src is None:
+        if not src:
             return 1.0
         if src == '/':
             return 0.5
@@ -2425,7 +2425,7 @@ class ABCHandler:
                     lastBrokenRythm = None
 
                 if lastGraceToken is not None:
-                    t.inGrace = TrueIMINUENDO
+                    t.inGrace = True
 
                 if lastTupletToken is None:
                     pass

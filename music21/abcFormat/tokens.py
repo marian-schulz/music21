@@ -864,14 +864,14 @@ class ABCVoiceField(ABCField, ABCClefFieldMixin):
     # given a logical unit, create an object
     # may be a chord, notes, metadata, bars
     REGEX = r'[\s]*V:.*'
-
-    def voice_id(self) -> Tuple[str, Optional[str]]:
+    def __init__(self, src):
+        super().__init__(src)
+        _split = self.data.split(' ', 1)
+        self.voice_id = _split[0]
         try:
-            id, data = self.data.split(' ', 1)
-            return id
-        except ValueError:
-            return self.data
-
+            self.voice_data = _split[1]
+        except:
+            self.voice_data = None
 
 class ABCUserDefinedField(ABCField):
 
@@ -893,7 +893,7 @@ class ABCInstructionField(ABCField):
     def __init__(self, src):
         super().__init__(src)
         k, v = self.data.split(' ', 1)
-        self.symbol = key.strip()
+        self.symbol = k.strip()
         self.instruction = v.strip()
 
 
@@ -1380,7 +1380,7 @@ class ABCDimonuendo(ABCSpanner):
         Returns:
              a music21 Diminuendo object
         '''
-        return Diminuendo()
+        return dynamics.Diminuendo()
 
 
 class ABCGraceStart(ABCToken):
@@ -2061,7 +2061,7 @@ def abcTokenizer(src: str, abcVersion=None) -> List[ABCToken]:
         regex, token_class = TOKEN_SPEC[rule]
         if token_class:
             try:
-                tokens.append(token_class(src=value))
+                tokens.append(token_class(value))
             except Exception as e:
                 raise ABCTokenException(f'Creating token [{token_class}] failed.\n{e}')
         else:
