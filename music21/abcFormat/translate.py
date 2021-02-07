@@ -50,6 +50,38 @@ def get_score_groups(src):
     # @TODO: Grouping staffs of voices
     pass
 
+def add_lyric(p: stream.Stream, abcHandler: 'abcFormat.ABCHandler'):
+    """
+    Adds Lyrik from the tokens of the abcHandler to the notes of the
+    Stream.
+    """
+    from music21 import abcFormat
+
+    lyric = (j for i in (t.getLyric() for t in abcHandler.tokens
+                         if isinstance(t, abcFormat.ABCMetadata)
+                         and t.isLyric())
+             for j in i)
+
+    for e in p.flat.notes:
+        if isinstance(e, harmony.ChordSymbol):
+            continue
+        try:
+            syl = next(lyric).strip()
+            while not syl:
+                syl = next(lyric).strip()
+                # skip empty words
+                if syl:
+                    break
+            if syl == '_':
+                continue
+            if syl == '*':
+                # a blank syllable
+                continue
+            e.lyric = syl
+        except StopIteration:
+            # No lyric is left, stop
+            break
+
 MIDI_RE = re.compile('voice\s*(?P<voice>.+)\s+instrument\s*=\s*(?P<instrument>.*)')
 def get_midi_voice(instruction: str) -> Tuple[str, int]:
     match = MIDI_RE.match(instruction)

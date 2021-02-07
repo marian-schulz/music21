@@ -1519,6 +1519,10 @@ class ABCGeneralNote(ABCToken):
         self.inBeam = None  # @TODO: not implemented yet
         self.inGrace: bool = False
 
+        # Attach the lyric to the first note with which it begins
+        # There maybe multible verses
+        self.lyrics = []
+
         # store a tuplet if active
         self.activeTuplet = None
 
@@ -2174,6 +2178,7 @@ class ABCHandler:
         self.lastExpressions = []
         self.lastBrokenRhythm = None
         self.accidental_propagation = self._accidentalPropagation()
+        self.first_lyric_note = None
     @property
     def abcVersion(self):
         return self._abcVersion
