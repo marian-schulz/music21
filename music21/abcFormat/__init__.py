@@ -119,6 +119,7 @@ _pitchTranslationCache = {}
 # note inclusion of w: for lyrics
 RE_ABC_NOTE = re.compile(r'([\^_=]*)([A-Ga-gz])([0-9/\',]*)')
 RE_ABC_VERSION = re.compile(r'(?:((^[^%].*)?[\n])*%abc-)(\d+)\.(\d+)\.?(\d+)?')
+RE_ABC_LYRIC = re.compile(r'[^*\-_ ]+[-]?|[*\-_]')
 
 # Type aliases
 ABCVersion = Tuple[int, int, int]
@@ -192,8 +193,9 @@ class ABCToken(prebase.ProtoM21Object):
     def m21Object(self):
         return None
 
-class ABCWordsField(ABCToken):
-    TOKEN_REGEX = r'[\s]*w:.*'
+class ABCLyrics(ABCToken):
+    TOKEN_REGEX = r'\s*w:.*'
+
     def get_words(self) -> List[str]:
         return [s.strip() for s in RE_ABC_LYRIC.findall(self.data)]
 
@@ -403,7 +405,7 @@ class ABCMetadata(ABCToken):
     >>> md.data
     'linebreak'
     '''
-    TOKEN_REGEX = r'[A-Za-z]:[^|].*?(?=$|\\n)'
+    TOKEN_REGEX = r'[A-Za-vx-z]:[^|].*?(?=$|\\n)'
 
     # given a logical unit, create an object
     # may be a chord, notes, metadata, bars
