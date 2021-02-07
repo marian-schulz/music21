@@ -36,18 +36,35 @@ from music21 import note
 from music21 import chord
 from music21 import spanner
 from music21 import harmony
-
+from music21 import instrument
+from collections import defaultdict
+from typing import Dict, Tuple, List
 
 environLocal = environment.Environment('abcFormat.translate')
 
-_abcArticulationsToM21 = {
-    'staccato': articulations.Staccato,
-    'upbow': articulations.UpBow,
-    'downbow': articulations.DownBow,
-    'accent': articulations.Accent,
-    'strongaccent': articulations.StrongAccent,
-    'tenuto': articulations.Tenuto,
-}
+
+class ABCTranslateException(exceptions21.Music21Exception):
+    pass
+
+def get_score_groups(src):
+    # @TODO: Grouping staffs of voices
+    pass
+
+MIDI_RE = re.compile('voice\s*(?P<voice>.+)\s+instrument\s*=\s*(?P<instrument>.*)')
+def get_midi_voice(instruction: str) -> Tuple[str, int]:
+    match = MIDI_RE.match(instruction)
+    if match:
+        gd = match.groupdict()
+        voice_id = gd['voice']
+        midi_instrument = gd['instrument']
+        if midi_instrument.isdigit():
+            midi_instrument = instrument.instrumentFromMidiProgram(int(gd['instrument']))
+        else:
+            midi_instrument = instrument.fromString(midi_instrument)
+
+        return voice_id, midi_instrument
+    else:
+        raise ABCTranslateException(f'Invalid midi instruction: "{instruction}"')
 
 
 def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
@@ -113,7 +130,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
 
             if mh.leftBarToken is not None:
                 # this may be Repeat Bar subclass
-                bLeft = mh.leftBarToken.getBarObject()
+                bLeft = mh.leftBarToken.m21Object()
                 if bLeft is not None:
                     dst.leftBarline = bLeft
                 if mh.leftBarToken.isRepeatBracket():
@@ -141,7 +158,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
                         rb.completeStatus = True
 
             if mh.rightBarToken is not None:
-                bRight = mh.rightBarToken.getBarObject()
+                bRight = mh.rightBarToken.m21Object()
                 if bRight is not None:
                     dst.rightBarline = bRight
                 # above returns bars and repeats; we need to look if we just
@@ -166,7 +183,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
         # environLocal.printDebug([mh, 'dst', dst])
         # ql = 0  # might not be zero if there is a pickup
 
-        postTransposition, clefSet = parseTokens(mh, dst, p, useMeasures)
+        postTransposition, clefSet = parseTokens(mh, dst, p, useMeasures, spannerBundle=spannerBundle)
 
         # append measure to part; in the case of trailing meta data
         # dst may be part, even though useMeasures is True
@@ -189,9 +206,11 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
             p.coreAppend(dst)
 
     try:
+        pass
         reBar(p, inPlace=True)
     except (ABCTranslateException, meter.MeterException, ZeroDivisionError):
         pass
+
     # clefs are not typically defined, but if so, are set to the first measure
     # following the meta data, or in the open stream
     if not clefSet and not p.recurse().getElementsByClass('Clef'):
@@ -223,18 +242,42 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     return p
 
 
-def parseTokens(mh, dst, p, useMeasures):
+def parseTokens(mh, dst, p, useMeasures, spannerBundle):
     '''
     parses all the tokens in a measure or part.
     '''
     # in case need to transpose due to clef indication
     from music21 import abcFormat
 
+    voice_id = None
+    # is a dictonary of dictonaries
+    # { voive_id: { property_key: data }}
+    voice_data = defaultdict(dict)
+    score = {}
     postTransposition = 0
     clefSet = False
+
     for t in mh.tokens:
         if isinstance(t, abcFormat.ABCMetadata):
-            if t.isMeter():
+            if t.isInstruction():
+                i_key, i_data = t.getInstruction()
+                if i_key == 'MIDI':
+                    try:
+                        voice, instrument = get_midi_voice(i_data)
+                        voice_data[voice]['MIDI'] = instrument
+                    except ABCTranslateException as e:
+                        environLocal.printDebug([e])
+                elif i_key == 'SCORE':
+                    try:
+                        score = get_score_groups(i_data)
+                    except ABCTranslateException as e:
+                        environLocal.printDebug([e])
+            elif t.isVoice():
+                vdata = t.getVoiceData()
+                voice_id = vdata['id']
+                voice_data[voice_id].update(vdata)
+                # maby something to do ?
+            elif t.isMeter():
                 ts = t.getTimeSignatureObject()
                 if ts is not None:  # can be None
                     # should append at the right position
@@ -263,95 +306,31 @@ def parseTokens(mh, dst, p, useMeasures):
                 mmObj = t.getMetronomeMarkObject()
                 dst.coreAppend(mmObj)
 
-        elif isinstance(t, abcFormat.ABCNote):
+        elif isinstance(t, (abcFormat.ABCGeneralNote, abcFormat.ABCMark)):
             # add the attached chord symbol
-            if t.chordSymbols:
-                cs_name = t.chordSymbols[0]
-                cs_name = re.sub('["]', '', cs_name).lstrip().rstrip()
-                cs_name = re.sub('[()]', '', cs_name)
-                cs_name = common.cleanedFlatNotation(cs_name)
-                try:
-                    if cs_name in ('NC', 'N.C.', 'No Chord', 'None'):
-                        cs = harmony.NoChord(cs_name)
-                    else:
-                        cs = harmony.ChordSymbol(cs_name)
-                    dst.coreAppend(cs, setActiveSite=False)
-                    dst.coreElementsChanged()
-                except ValueError:
-                    pass  # Exclude malformed chord
-            if t.isRest:
-                n = note.Rest()
-            else:
-                n = note.Note(t.pitchName)
-                if n.pitch.accidental is not None:
-                    n.pitch.accidental.displayStatus = t.accidentalDisplayStatus
+            n = t.m21Object()
+            if n is None:
+                environLocal.printDebug([f'M21Object for token "{t} is None.'])
+                continue
+            dst.coreAppend(n, setActiveSite=False)
 
-            # as ABCChord is subclass of ABCNote, handle first
-            if isinstance(t, abcFormat.ABCChord) and t.subTokens:
-                # may have more than notes?
-                pitchNameList = []
-                accStatusList = []  # accidental display status list
-                for tSub in t.subTokens:
-                    # notes are contained as subTokens are already parsed
-                    if isinstance(tSub, abcFormat.ABCNote):
-                        pitchNameList.append(tSub.pitchName)
-                        accStatusList.append(tSub.accidentalDisplayStatus)
-                c = chord.Chord(pitchNameList)
-                c.duration.quarterLength = t.quarterLength
-                if t.activeTuplet:
-                    thisTuplet = copy.deepcopy(t.activeTuplet)
-                    if thisTuplet.durationNormal is None:
-                        thisTuplet.setDurationType(c.duration.type, c.duration.dots)
-                    c.duration.appendTuplet(thisTuplet)
-                # adjust accidental display for each contained pitch
-                for pIndex in range(len(c.pitches)):
-                    if c.pitches[pIndex].accidental is None:
-                        continue
-                    c.pitches[pIndex].accidental.displayStatus = accStatusList[pIndex]
-                dst.coreAppend(c)
+        elif isinstance(t, abcFormat.ABCSpanner):
+            p.coreInsert(0, t.m21Object())
 
-                # ql += t.quarterLength
-            else:
-                n.duration.quarterLength = t.quarterLength
-                if t.activeTuplet:
-                    thisTuplet = copy.deepcopy(t.activeTuplet)
-                    if thisTuplet.durationNormal is None:
-                        thisTuplet.setDurationType(n.duration.type, n.duration.dots)
-                    n.duration.appendTuplet(thisTuplet)
+    """
+    staffGroup1 = layout.StaffGroup([p1, p2],
 
-                # start or end a tie at note n
-                if t.tie is not None:
-                    if t.tie in ('start', 'continue'):
-                        n.tie = tie.Tie(t.tie)
-                        n.tie.style = 'normal'
-                    elif t.tie == 'stop':
-                        n.tie = tie.Tie(t.tie)
-                # Was: Extremely Slow for large Opus files... why?
-                # Answer: some pieces didn't close all their spanners, so
-                # everything was in a Slur/Diminuendo, etc.
-                for span in t.applicableSpanners:
-                    span.addSpannedElements(n)
+         name='Marimba', abbreviation='Mba.', symbol='brace')
 
-                if t.inGrace:
-                    n = n.getGrace()
+    staffGroup1.barTogether = 'Mensurstrich'
 
-                n.articulations = []
-                while any(t.articulations):
-                    tokenArticulationStr = t.articulations.pop()
-                    if tokenArticulationStr not in _abcArticulationsToM21:
-                        continue
-                    m21ArticulationClass = _abcArticulationsToM21[tokenArticulationStr]
-                    m21ArticulationObj = m21ArticulationClass()
-                    n.articulations.append(m21ArticulationObj)
+    s.insert(0, staffGroup1)
+    """
+    if voice_id and voice_id in voice_data:
+        voice_data = voice_data[voice_id]
+        if 'MIDI' in voice_data:
+            p.coreInsert(0.0, voice_data['MIDI'])
 
-                dst.coreAppend(n, setActiveSite=False)
-
-        elif isinstance(t, abcFormat.ABCSlurStart):
-            p.coreAppend(t.slurObj)
-        elif isinstance(t, abcFormat.ABCCrescStart):
-            p.coreAppend(t.crescObj)
-        elif isinstance(t, abcFormat.ABCDimStart):
-            p.coreAppend(t.dimObj)
     dst.coreElementsChanged()
     return postTransposition, clefSet
 
@@ -404,19 +383,9 @@ def abcToStreamScore(abcHandler, inputM21=None):
                 md.number = int(t.data)  # convert to int?
                 # environLocal.printDebug(['got work number', md.number])
 
-    partHandlers = []
-    tokenCollections = abcHandler.splitByVoice()
-    if len(tokenCollections) == 1:
-        partHandlers.append(tokenCollections[0])
-    else:
-        # add metadata -- stored in tokenCollections[0] --
-        #            to each Part (stored in tokenCollections[i])
-        for i in range(1, len(tokenCollections)):
-            # concatenate abc handler instances
-            newABCHandler = tokenCollections[0] + tokenCollections[i]
-            # dummy = [t.src for t in newABCHandler.tokens]
-            # print(dummy)
-            partHandlers.append(newABCHandler)
+    # split the tune is voices (part)
+    # each voice has leading metadata from the tune
+    partHandlers = abcHandler.splitByVoice()
 
     # find if this token list defines measures
     # this should probably operate at the level of tunes, not the entire
@@ -475,7 +444,7 @@ def reBar(music21Part, *, inPlace=False):
     '''
     Re-bar overflow measures using the last known time signature.
 
-    >>> irl2 = corpus.parse('irl', number=2)
+    >>> irl2 = corpus.parse('irl', number=2, forceSource=True)
     >>> irl2.metadata.title
     'Aililiu na Gamhna, S.35'
     >>> music21Part = irl2[1]
@@ -507,7 +476,7 @@ def reBar(music21Part, *, inPlace=False):
     An example where the time signature wouldn't be the same. This score is
     mistakenly marked as 4/4, but has some measures that are longer.
 
-    >>> irl15 = corpus.parse('irl', number=15)
+    >>> irl15 = corpus.parse('irl', number=15, forceSource=True)
     >>> irl15.metadata.title
     'Esternowe, S. 60'
     >>> music21Part2 = irl15.parts[0]  # 4/4 time signature
@@ -572,8 +541,6 @@ def reBar(music21Part, *, inPlace=False):
         return music21Part
 
 
-class ABCTranslateException(exceptions21.Music21Exception):
-    pass
 
 
 # ------------------------------------------------------------------------------
@@ -797,19 +764,20 @@ class Test(unittest.TestCase):
         # each score in the opus is a Stream that contains a Part and metadata
         p1 = o.getScoreByNumber(1).parts[0]
         self.assertEqual(p1.offset, 0.0)
-        self.assertEqual(len(p1.flat.notesAndRests), 90)
+        f = p1.flat.notesAndRests
+        self.assertEqual(len(p1.flat.notesAndRests), 91)
 
         p2 = o.getScoreByNumber(2).parts[0]
         self.assertEqual(p2.offset, 0.0)
-        self.assertEqual(len(p2.flat.notesAndRests), 80)
+        self.assertEqual(len(p2.flat.notesAndRests), 81)
 
         p3 = o.getScoreByNumber(3).parts[0]
         self.assertEqual(p3.offset, 0.0)
-        self.assertEqual(len(p3.flat.notesAndRests), 86)
+        self.assertEqual(len(p3.flat.notesAndRests), 87)
 
         p4 = o.getScoreByNumber(4).parts[0]
         self.assertEqual(p4.offset, 0.0)
-        self.assertEqual(len(p4.flat.notesAndRests), 78)
+        self.assertEqual(len(p4.flat.notesAndRests), 79)
 
         sMerged = o.mergeScores()
         self.assertEqual(sMerged.metadata.title, 'Mille regrets')
@@ -882,10 +850,8 @@ class Test(unittest.TestCase):
 
         for n, (majName, minName) in enumerate(zip(major, minor)):
             am = abcFormat.ABCMetadata('K:' + majName)
-            am.preParse()
             ks_major = am.getKeySignatureObject()
             am = abcFormat.ABCMetadata('K:' + minName)
-            am.preParse()
             ks_minor = am.getKeySignatureObject()
             self.assertEqual(n, ks_major.sharps)
             self.assertEqual(n, ks_minor.sharps)
@@ -898,10 +864,8 @@ class Test(unittest.TestCase):
 
         for n, (majName, minName) in enumerate(zip(major, minor)):
             am = abcFormat.ABCMetadata('K:' + majName)
-            am.preParse()
             ks_major = am.getKeySignatureObject()
             am = abcFormat.ABCMetadata('K:' + minName)
-            am.preParse()
             ks_minor = am.getKeySignatureObject()
             self.assertEqual(-1 * n, ks_major.sharps)
             self.assertEqual(-1 * n, ks_minor.sharps)
@@ -1065,6 +1029,9 @@ class Test(unittest.TestCase):
 
 if __name__ == '__main__':
     import music21
+
+    irl2 = music21.corpus.parse('irl', number=2,forceSource=True)
+
     music21.mainTest(Test)
 
 
