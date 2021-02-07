@@ -461,6 +461,7 @@ X: 979
 T: Staccato test, plus accents and tenuto marks
 M: 2/4
 L: 1/16
+U: M = !tenuto!
 K: Edor
 B,2|!diminuendo(!.E^D.E-E!diminuendo)! ((3.G.F.KG)BA)|E^DMEF (3(G-GG))BkMA|(E(^DE)F) (3(kGKF)G)A-A|(E^DEF (3(GFG)))BA|G6
 '''
@@ -707,7 +708,7 @@ class Test(unittest.TestCase):
         cSharp = notes[3]
         cThrough = notes[5]
         self.assertEqual(cSharp.pitch.midi, cThrough.pitch.midi,
-                         'Sharp does not carry through measure')
+                         f'Sharp does not carry through measure: {cSharp} != {cThrough}')
         bFlat = notes[4]
         bLast = notes[7]
         self.assertEqual(bFlat.pitch.midi, bLast.pitch.midi, 'Flat does not carry through measure')
@@ -718,7 +719,7 @@ class Test(unittest.TestCase):
         self.assertEqual(notes[12].pitch.midi, 73, 'Sharp does not carry through measure')
         self.assertEqual(notes[13].pitch.midi, 72, 'Natural is ignored')
         self.assertEqual(notes[14].pitch.midi, 72, 'Natural does not carry through measure')
-        self.assertEqual(notes[16].pitch.midi, 72, 'Sharp carries over measure incorrectly')
+        self.assertEqual(notes[16].pitch.midi, 72, f'Sharp of {notes[16].pitch} carries over measure incorrectly')
         self.assertEqual(notes[17].pitch.midi, 74, 'Sharp (D5) carries over measure incorrectly')
         self.assertEqual(notes[18].pitch.midi, 78, 'Natural (F5) carries over measure incorrectly')
         # TODO: Carrying an accidental into the next measure with a tie does not work.
@@ -820,7 +821,7 @@ class Test(unittest.TestCase):
         '''
         Translation of ABC Chord variations
         '''
-        from music21 import abcFormat, chord, stream
+        from music21 import abcFormat, chord
         from music21.abcFormat import translate
 
         af = abcFormat.ABCFile()
@@ -831,7 +832,7 @@ class Test(unittest.TestCase):
         for abc_chord in ['[]', '[z]']:
             ah = af.readstr(abc_dl + '[]')
             s = translate.abcToStreamScore(ah)
-            part = s.getElementsByClass(stream.Part)
+            part = s.parts[0]
             self.assertFalse(part.getElementsByClass(chord.Chord),
                              'Empty chord "%s" in Score' % abc_chord)
 
@@ -857,15 +858,18 @@ class Test(unittest.TestCase):
             s = translate.abcToStreamScore(ah)
             self.assertEqual(s.duration.quarterLength, quarter_length,
                              'invalid duration of chord "%s"' % abc_chord)
-            part = s.getElementsByClass(stream.Part)[0]
-            for e in part.getElementsByClass(chord.Chord):
-                for pitch_name in chord_pitches:
-                    self.assertIn(pitch_name, e.pitchNames,
-                                  'Pitch not in Chord "%s"' % abc_chord)
+
+            notes = s.parts[0].notes
+            chord0 = notes[0]
+            self.assertEqual(len(notes), 1, 'Wrong number of chords found,')
+            self.assertIsInstance(chord0, chord.Chord, 'Not a Chord!')
+            for pitch_name in chord_pitches:
+                self.assertIn(pitch_name, chord0.pitchNames,
+                              'Pitch not in Chord "%s"' % abc_chord)
 
     def testAbc21ChordSymbol(self):
         # Test the chord symbol for note and chord
-        from music21 import abcFormat, harmony, stream
+        from music21 import abcFormat, harmony
         from music21.abcFormat import translate
 
         # default length of this test
@@ -874,7 +878,7 @@ class Test(unittest.TestCase):
         af = abcFormat.ABCFile()
         for abc_text in ('"C"C', '"C"[ceg]'):
             ah = af.readstr(abc_dl + abc_text)
-            part = translate.abcToStreamScore(ah).getElementsByClass(stream.Part)[0]
+            part = translate.abcToStreamScore(ah).parts[0]
             chord_symbol = part.getElementsByClass(harmony.ChordSymbol)
             self.assertTrue(chord_symbol, 'No ChordSymbol found in abc: "%s"' % abc_text)
             for pitch_name in 'CEG':
@@ -883,7 +887,7 @@ class Test(unittest.TestCase):
 
     def testAbc21BrokenRythm(self):
         # Test the chord symbol for note and chord
-        from music21 import abcFormat, note, stream
+        from music21 import abcFormat, note
         from music21.abcFormat import translate
 
         # default length of this test
@@ -925,7 +929,7 @@ class Test(unittest.TestCase):
         af = abcFormat.ABCFile()
         for abc, soll_left, soll_right in data:
             ah = af.readstr(abc_dl + abc)
-            part = translate.abcToStreamScore(ah).getElementsByClass(stream.Part)[0]
+            part = translate.abcToStreamScore(ah).parts[0]
             general_notes = part.getElementsByClass(note.GeneralNote)
             self.assertEqual(len(general_notes), 2,
                              f'Wrong numbers of Notes found in abc: {abc}!')
@@ -939,4 +943,5 @@ class Test(unittest.TestCase):
 if __name__ == '__main__':
     import music21
     # music21.converter.parse(reelsABC21, format='abc').scores[1].show()
+    Test().testAbc21DirectiveCarryOctave()
     music21.mainTest(Test)
