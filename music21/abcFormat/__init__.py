@@ -192,6 +192,10 @@ class ABCToken(prebase.ProtoM21Object):
     def m21Object(self):
         return None
 
+class ABCWordsField(ABCToken):
+    TOKEN_REGEX = r'[\s]*w:.*'
+    def get_words(self) -> List[str]:
+        return [s.strip() for s in RE_ABC_LYRIC.findall(self.data)]
 
 class ABCMark(ABCToken):
     '''
