@@ -223,7 +223,9 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
         # environLocal.printDebug([mh, 'dst', dst])
         # ql = 0  # might not be zero if there is a pickup
 
-        postTransposition, clefSet = parseTokens(mh, dst, p, useMeasures, spannerBundle=spannerBundle)
+        transposition, clefSet = parseTokens(mh, dst, p, useMeasures, spannerBundle=spannerBundle)
+        if transposition is not None:
+            postTransposition = transposition
 
         # append measure to part; in the case of trailing meta data
         # dst may be part, even though useMeasures is True
@@ -296,7 +298,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
     # { voive_id: { property_key: data }}
     voice_data = defaultdict(dict)
     score = {}
-    postTransposition = 0
+    postTransposition = None
     clefSet = False
 
     for t in mh.tokens:
@@ -309,16 +311,17 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                         voice_data[voice]['MIDI'] = instrument
                     except ABCTranslateException as e:
                         environLocal.printDebug([e])
-                elif i_key == 'SCORE':
-                    try:
-                        score = get_score_groups(i_data)
-                    except ABCTranslateException as e:
-                        environLocal.printDebug([e])
+                #elif i_key == 'SCORE':
+                #    try:
+                #        score = get_score_groups(i_data)
+                #    except ABCTranslateException as e:
+                #        environLocal.printDebug([e])
             elif t.isVoice():
-                vdata = t.getVoiceData()
-                voice_id = vdata['id']
-                voice_data[voice_id].update(vdata)
-                # maby something to do ?
+                voice_id = t.getVoiceData()['id']
+                clefObj, transposition = t.getClefObject()
+                if clefObj:
+                    voice_data[voice_id]['CLEF'] = clefObj
+                    voice_data[voice_id]['TRANSPOSITION'] = transposition
             elif t.isMeter():
                 ts = t.getTimeSignatureObject()
                 if ts is not None:  # can be None
@@ -344,18 +347,12 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                     else:
                         dst.coreAppend(clefObj)
                     postTransposition = transposition
+
             elif t.isTempo():
                 mmObj = t.getMetronomeMarkObject()
                 dst.coreAppend(mmObj)
 
         elif isinstance(t, (abcFormat.ABCGeneralNote, abcFormat.ABCMark)):
-            # if isinstance(t, abcFormat.ABCGeneralNote) and t.lyrics
-            #     LYRICS_ITERATOR = [iter(l) for l in t.lyrics]
-
-            # if LYRICS_ITERATOR:
-            #     # @TODO: wrong ..
-            #     pass
-            # add the attached chord symbol
             n = t.m21Object()
             if n is None:
                 environLocal.printDebug([f'M21Object for token "{t} is None.'])
@@ -378,6 +375,10 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
         voice_data = voice_data[voice_id]
         if 'MIDI' in voice_data:
             p.coreInsert(0.0, voice_data['MIDI'])
+        if 'CLEF' in voice_data:
+            p.coreInsert(0.0, voice_data['CLEF'])
+        if 'TRANSPOSITION' in voice_data:
+            postTransposition = voice_data['TRANSPOSITION']
 
     dst.coreElementsChanged()
     return postTransposition, clefSet
