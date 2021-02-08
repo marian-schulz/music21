@@ -269,13 +269,14 @@ class ABCAnnotations(ABCMark):
     TOKEN_REGEX = '"[\^_<>@][^"]*"'
 
     def __init__(self, src: str):
-        super().__init__(src, expressions.TextExpression)
+        super().__init__(src.strip('"'), expressions.TextExpression)
 
     def m21Object(self):
-        te = expressions.TextExpression(self.src.strip('"')[1:])
+        te = expressions.TextExpression(self.src[1:])
         #@TODO: positioning via style has no effect in musescore
         if self.src[0] == '^':
             te.style.absoluteY = 'above'
+            te.style.relativeY = 20
         elif self.src[0] == '_':
             te.style.absoluteY = 'below'
         return te
@@ -798,24 +799,49 @@ class ABCMetadata(ABCToken):
         >>> am.getClefObject()
         (<music21.clef.BassClef>, -24)
         '''
-        if not self.isKey():
+        if self.isKey():
+
+            # placing this import in method for now; key.py may import this module
+            clefObj = None
+            t = None
+
+            from music21 import clef
+            if '-8va' in self.data.lower():
+                clefObj = clef.Treble8vbClef()
+                t = -12
+            elif 'bass' in self.data.lower():
+                clefObj = clef.BassClef()
+                t = -24
+
+            # if not defined, returns None, None
+            return clefObj, t
+
+        elif self.isVoice():
+            voicedata = self.getVoiceData()
+
+            # placing this import in method for now; key.py may import this module
+            clefObj = None
+            t = None
+
+            from music21 import clef
+
+            try:
+                clefstr = voicedata['clef'].lower()
+                if 'treble-8' ==  clefstr:
+                    clefObj = clef.Treble8vbClef()
+                    t = -12
+                elif 'bass' == clefstr:
+                    clefObj = clef.BassClef()
+                    t = -24
+            except KeyError:
+                pass
+            # if not defined, returns None, None
+            return clefObj, t
+
+        else:
             raise ABCTokenException(
                 'no key signature associated with this metadata; needed for getting Clef Object')
 
-        # placing this import in method for now; key.py may import this module
-        clefObj = None
-        t = None
-
-        from music21 import clef
-        if '-8va' in self.data.lower():
-            clefObj = clef.Treble8vbClef()
-            t = -12
-        elif 'bass' in self.data.lower():
-            clefObj = clef.BassClef()
-            t = -24
-
-        # if not defined, returns None, None
-        return clefObj, t
 
     def getMetronomeMarkObject(self) -> Optional['music21.tempo.MetronomeMark']:
         '''
@@ -893,6 +919,7 @@ class ABCMetadata(ABCToken):
             mmObj = tempo.MetronomeMark(text=tempoStr, number=number,
                                         referent=referent)
         # returns None if not defined
+        mmObj.style.fontStyle = 'italic'
         return mmObj
 
     def getDefaultQuarterLength(self) -> float:
@@ -986,6 +1013,7 @@ class ABCMetadata(ABCToken):
             return key, data
         except IndexError:
             return key, ''
+
 
 
 class ABCInlineMetadata(ABCMetadata):
@@ -2119,7 +2147,7 @@ class ABCChord(ABCGeneralNote):
         return c
 
 
-TOKEN_SPEC: Dict[str, Tuple[str, Optional[Callable]]] = {'COMMENT': ('%[^%].*\n', None),
+TOKEN_SPEC: Dict[str, Tuple[str, Optional[Callable]]] = {'COMMENT': ('%(?=[^%]).*$', None),
                                                          'LINE_CONTINUE': (r'\\n', None)}
 
 def registerToken(token_class: Type[ABCToken], recursive: bool = True):
@@ -2388,11 +2416,11 @@ class ABCHandler:
         self.lastExpressions.append(token)
         return token
 
-    def process_ABCLyrics(self, token: ABCLyrics):
-        if self.lyricStartNote:
-            self.lyricStartNote.lyrics.append(token)
-        else:
-            environLocal.printDebug([f'No notes for lyric found.'])
+    #def process_ABCLyrics(self, token: ABCLyrics):
+        #if self.lyricStartNote:
+        #    self.lyricStartNote.lyrics.append(token)
+        #else:
+        #    environLocal.printDebug([f'No notes for lyric found.'])
 
     def process_ABCGeneralNote(self, token: ABCGeneralNote):
         """
@@ -2439,6 +2467,7 @@ class ABCHandler:
         if self.lastBrokenRhythm:
             self.lastNoteToken.brokenRyhtmModifier = self.lastBrokenRhythm.left
             token.brokenRyhtmModifier = self.lastBrokenRhythm.right
+            self.lastBrokenRhythm = None
 
         self.lastNoteToken = token
 
@@ -2903,9 +2932,9 @@ class ABCHandler:
         voice_handler = []
         # Create a new Handler for each voice with the header tokens first.
         for tokens in voices.values():
-            voice_handler.append(
-                ABCHandler(tokens=header+tokens, abcVersion=self.abcVersion)
-            )
+            vh = ABCHandler(tokens=header+tokens, abcVersion=self.abcVersion)
+            if vh.hasNotes():
+                voice_handler.append(vh)
         return voice_handler
 
     def splitByMeasure(self) -> List['ABCHandlerBar']:
