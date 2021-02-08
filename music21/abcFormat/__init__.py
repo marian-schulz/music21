@@ -194,10 +194,19 @@ class ABCToken(prebase.ProtoM21Object):
         return None
 
 class ABCLyrics(ABCToken):
-    TOKEN_REGEX = r'\s*w:.*'
+    TOKEN_REGEX = r'w:[^|].*(\n[+]:.*)*'
+    def __init__(self, src: str):
+        r'''
+        >>> abc = ('w:A- ve Ma- ri- -|\n+:a! Jung- - - frau *|')
+        >>> ah = abcFormat.ABCHandler()
+        >>> w = ah.tokenize(abc)
+        >>> w[0].get_words()
+        ['A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
+        '''
+        super().__init__(src[2:].replace('\n+:',' '))
 
     def get_words(self) -> List[str]:
-        return [s.strip() for s in RE_ABC_LYRIC.findall(self.data)]
+        return [s.strip() for s in RE_ABC_LYRIC.findall(self.src)]
 
 class ABCMark(ABCToken):
     '''
@@ -391,7 +400,7 @@ class ABCDecoration(ABCToken):
 
 
 class ABCMetadata(ABCToken):
-    '''
+    r'''
     Defines a token of metadata in ABC.
 
     >>> md = abcFormat.ABCMetadata('I:linebreak')
@@ -405,7 +414,7 @@ class ABCMetadata(ABCToken):
     >>> md.data
     'linebreak'
     '''
-    TOKEN_REGEX = r'[A-Za-vx-z]:[^|].*?(?=$|\\n)'
+    TOKEN_REGEX = r'^[A-Za-vxz]:.*$'
 
     # given a logical unit, create an object
     # may be a chord, notes, metadata, bars
@@ -2140,8 +2149,7 @@ registerToken(token_class=ABCToken)
 
 # Build a regular expression for the tokenizer from TOKEN_SPEC
 TOKEN_RE = re.compile(r'|'.join(f'(?P<{group}>{spec[0]})'
-                                for group, spec in TOKEN_SPEC.items()),
-                      re.MULTILINE)
+                                for group, spec in TOKEN_SPEC.items()), flags=re.MULTILINE)
 
 
 # ------------------------------------------------------------------------------
@@ -2184,7 +2192,7 @@ class ABCHandler:
         self.lastExpressions = []
         self.lastBrokenRhythm = None
         self.accidental_propagation = self._accidentalPropagation()
-        self.first_lyric_note = None
+        self.lyricStartNote: ABCGeneralNote = None
     @property
     def abcVersion(self):
         return self._abcVersion
@@ -2380,6 +2388,12 @@ class ABCHandler:
         self.lastExpressions.append(token)
         return token
 
+    def process_ABCLyrics(self, token: ABCLyrics):
+        if self.lyricStartNote:
+            self.lyricStartNote.lyrics.append(token)
+        else:
+            environLocal.printDebug([f'No notes for lyric found.'])
+
     def process_ABCGeneralNote(self, token: ABCGeneralNote):
         """
         Process the ABCGeneralNote tokens (common for notes, chords and rests)
@@ -2389,6 +2403,11 @@ class ABCHandler:
                 'no active default note length provided for note processing. '
                 + f'{token}'
             )
+
+
+        # this is the first note relevant for next lyrics
+        if self.lyricStartNote is None or self.lyricStartNote.lyrics:
+            self.lyricStartNote = token
 
         token.defaultQuarterLength = self.lastDefaultQL
         token.activeSpanner = self.activeSpanner[:]  # fast copy of a list
@@ -2768,21 +2787,21 @@ class ABCHandler:
         return None
 
     def definesMeasures(self):
-        '''
+        r'''
         Returns True if this token structure defines Measures in a normal Measure form.
         Otherwise False
 
 
-        >>> abcStr = ('M:6/8\\nL:1/8\\nK:G\\nV:1 name="Whistle" ' +
-        ...     'snm="wh"\\nB3 A3 | G6 | B3 A3 | G6 ||\\nV:2 name="violin" ' +
-        ...     'snm="v"\\nBdB AcA | GAG D3 | BdB AcA | GAG D6 ||\\nV:3 name="Bass" ' +
-        ...     'snm="b" clef=bass\\nD3 D3 | D6 | D3 D3 | D6 ||')
+        >>> abcStr = ('M:6/8\nL:1/8\nK:G\nV:1 name="Whistle" ' +
+        ...     'snm="wh"\nB3 A3 | G6 | B3 A3 | G6 ||\nV:2 name="violin" ' +
+        ...     'snm="v"\nBdB AcA | GAG D3 | BdB AcA | GAG D6 ||\nV:3 name="Bass" ' +
+        ...     'snm="b" clef=bass\nD3 D3 | D6 | D3 D3 | D6 ||')
         >>> ah = abcFormat.ABCHandler()
         >>> junk = ah.process(abcStr)
         >>> ah.definesMeasures()
         True
 
-        >>> abcStr = 'M:6/8\\nL:1/8\\nK:G\\nB3 A3 G6 B3 A3 G6'
+        >>> abcStr = 'M:6/8\nL:1/8\nK:G\nB3 A3 G6 B3 A3 G6'
         >>> ah = abcFormat.ABCHandler()
         >>> junk = ah.process(abcStr)
         >>> ah.definesMeasures()
@@ -3780,4 +3799,4 @@ if __name__ == '__main__':
 
     s = music21.converter.parse(avem)
     s.show()
-    #music21.mainTest(Test)
+    music21.mainTest(Test)

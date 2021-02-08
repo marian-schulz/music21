@@ -274,6 +274,8 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     return p
 
 
+LYRICS_ITERATOR = None
+
 def parseTokens(mh, dst, p, useMeasures, spannerBundle):
     '''
     parses all the tokens in a measure or part.
@@ -339,6 +341,12 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                 dst.coreAppend(mmObj)
 
         elif isinstance(t, (abcFormat.ABCGeneralNote, abcFormat.ABCMark)):
+            if isinstance(t, abcFormat.ABCGeneralNote) and t.lyrics
+                LYRICS_ITERATOR = [iter(l) for l in t.lyrics]
+
+            if LYRICS_ITERATOR:
+                # @TODO: wrong ..
+                pass
             # add the attached chord symbol
             n = t.m21Object()
             if n is None:
