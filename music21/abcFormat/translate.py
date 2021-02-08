@@ -46,30 +46,17 @@ environLocal = environment.Environment('abcFormat.translate')
 class ABCTranslateException(exceptions21.Music21Exception):
     pass
 
-def get_score_groups(src):
-    # @TODO: Grouping staffs of voices
-    pass
-
-"""
-- 	(hyphen) break between syllables within a word
-_ 	(underscore) previous syllable is to be held for an extra note
-* 	one note is skipped (i.e. * is equivalent to a blank syllable)
-~ 	appears as a space; aligns multiple words under one note
-\- 	appears as hyphen; aligns multiple syllables under one note
-| 	advances to the next bar
-"""
-def add_lyric(p: stream.Stream, abcHandler: 'abcFormat.ABCHandler'):
+def add_lyrics(p: stream.Part, lyrics: List['ABCLyrics']):
     """
     Adds Lyrik from the tokens of the abcHandler to the notes of the
     Stream.
     """
-    from music21 import abcFormat
 
-    lyric = (j for i in (t.getLyric() for t in abcHandler.tokens
-                         if isinstance(t, abcFormat.ABCMetadata)
-                         and t.isLyric())
-             for j in i)
+    # iterate over bars & there notes
 
+
+    # for the first step we did only one lyric line
+    lyric = lyrics[0]
     for e in p.flat.notes:
         if isinstance(e, harmony.ChordSymbol):
             continue
@@ -89,6 +76,19 @@ def add_lyric(p: stream.Stream, abcHandler: 'abcFormat.ABCHandler'):
         except StopIteration:
             # No lyric is left, stop
             break
+
+def get_score_groups(src):
+    # @TODO: Grouping staffs of voices
+    pass
+
+"""
+- 	(hyphen) break between syllables within a word
+_ 	(underscore) previous syllable is to be held for an extra note
+* 	one note is skipped (i.e. * is equivalent to a blank syllable)
+~ 	appears as a space; aligns multiple words under one note
+\- 	appears as hyphen; aligns multiple syllables under one note
+| 	advances to the next bar
+"""
 
 MIDI_RE = re.compile('voice\s*(?P<voice>.+)\s+instrument\s*=\s*(?P<instrument>.*)')
 def get_midi_voice(instruction: str) -> Tuple[str, int]:
@@ -223,7 +223,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
         # environLocal.printDebug([mh, 'dst', dst])
         # ql = 0  # might not be zero if there is a pickup
 
-        transposition, clefSet = parseTokens(mh, dst, p, useMeasures, spannerBundle=spannerBundle)
+        transposition, clefSet, lyrics = parseTokens(mh, dst, p, useMeasures, spannerBundle=spannerBundle)
         if transposition is not None:
             postTransposition = transposition
 
@@ -246,6 +246,9 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
                 dst.number = measureNumber
                 measureNumber += 1
             p.coreAppend(dst)
+
+    if abcHandler.lyrics:
+        add_lyrics(p, abcHandler.lyrics)
 
     try:
         pass
@@ -381,7 +384,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
             postTransposition = voice_data['TRANSPOSITION']
 
     dst.coreElementsChanged()
-    return postTransposition, clefSet
+    return postTransposition, clefSet, lyrics
 
 
 def abcToStreamScore(abcHandler, inputM21=None):
