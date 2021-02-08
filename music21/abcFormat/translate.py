@@ -247,8 +247,8 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
                 measureNumber += 1
             p.coreAppend(dst)
 
-    if abcHandler.lyrics:
-        add_lyrics(p, abcHandler.lyrics)
+    #if abcHandler.lyrics:
+   #    add_lyrics(p, abcHandler.lyrics)
 
     try:
         pass
@@ -384,6 +384,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
             postTransposition = voice_data['TRANSPOSITION']
 
     dst.coreElementsChanged()
+    lyrics = None
     return postTransposition, clefSet, lyrics
 
 
