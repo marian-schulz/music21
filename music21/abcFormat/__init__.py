@@ -208,6 +208,18 @@ class ABCLyrics(ABCToken):
     def get_words(self) -> List[str]:
         return [s.strip() for s in RE_ABC_LYRIC.findall(self.src)]
 
+
+class ABCLyricBlock(ABCToken):
+    """
+    We need to organize the lyrics in the token stream by lyrical lines
+    """
+    def __init__(self):
+        # container for lyrics
+        self.lines: List[ABCLyrics] = []
+        # Used by the translater to remember to which measure the block belongs
+        self.measure = None
+
+
 class ABCMark(ABCToken):
     '''
     Base class of abc score marker token
@@ -273,12 +285,11 @@ class ABCAnnotations(ABCMark):
 
     def m21Object(self):
         te = expressions.TextExpression(self.src[1:])
-        #@TODO: positioning via style has no effect in musescore
+        # musicscore is ignoring relative-x / relative-y (need an other tool to check the placement directives)
         if self.src[0] == '^':
-            te.style.absoluteY = 'above'
-            te.style.relativeY = 20
+            te.positionPlacement = 'above'
         elif self.src[0] == '_':
-            te.style.absoluteY = 'below'
+            te.positionPlacement = 'below'
         return te
 
 
@@ -2220,7 +2231,9 @@ class ABCHandler:
         self.lastExpressions = []
         self.lastBrokenRhythm = None
         self.accidental_propagation = self._accidentalPropagation()
-        self.lyricStartNote: ABCGeneralNote = None
+        self.lyrics = None
+        self.lastLyricBlock = None
+
     @property
     def abcVersion(self):
         return self._abcVersion
@@ -2433,10 +2446,6 @@ class ABCHandler:
             )
 
 
-        # this is the first note relevant for next lyrics
-        if self.lyricStartNote is None or self.lyricStartNote.lyrics:
-            self.lyricStartNote = token
-
         token.defaultQuarterLength = self.lastDefaultQL
         token.activeSpanner = self.activeSpanner[:]  # fast copy of a list
         token.keySignature = self.lastKeySignature
@@ -2469,6 +2478,12 @@ class ABCHandler:
             token.brokenRyhtmModifier = self.lastBrokenRhythm.right
             self.lastBrokenRhythm = None
 
+        if self.lastLyricBlock is None or self.lastLyricBlock.lines:
+            # If the LyricsBlock is not Empty start a new LyricBlock
+            self.lastLyricBlock = ABCLyricBlock()
+            # insert the new LyricsBlock in the token list
+            self.tokens.append(self.lastLyricBlock)
+
         self.lastNoteToken = token
 
     def process_ABCGraceStart(self, token: ABCGraceStart):
@@ -2482,6 +2497,14 @@ class ABCHandler:
         Process ABCGraceStop tokens
         """
         self.lastGraceToken = None
+
+    def process_ABCLyrics(self, token: ABCLyrics):
+
+        if self.lastLyricBlock is None:
+            environLocal.printDebug(['Lyrics without Notes found'])
+        else:
+            self.lastLyricBlock.lines.append(token)
+
 
     def process_ABCMetadata(self, token: ABCMetadata):
         """
@@ -2578,8 +2601,13 @@ class ABCHandler:
         for processing. If no method with this name has found it will search for a
         method of one of his base classes.
         '''
-        tokenIter = iter(self.tokens)
-        tokens = []
+
+        # we build self.tokens new
+        # because we have to insert lyric blocks and userdefined tokens
+        _tokens = self.tokens
+        tokenIter = iter(_tokens)
+        self.tokens = []
+
         while True:
             # get a token from the token iteratur until the StopIteration exception has raised
             try:
@@ -2616,11 +2644,10 @@ class ABCHandler:
                 if token_process_method is not None:
                     token_process_method(token)
 
-                tokens.append(token)
+                self.tokens.append(token)
 
             except StopIteration:
                 # replace tokens with the collected tokens
-                self.tokens = tokens
                 break
 
     def process(self, strSrc: str) -> None:
@@ -2850,6 +2877,13 @@ class ABCHandler:
                     return True
         return False
 
+    def processLyrics(self):
+        """
+        Map lyrics to notes
+        """
+        # hmm we need measures for lyric mapping
+        pass
+
     def splitByVoice(self) -> List['ABCHandler']:
         """
         Split the tokens of this ABCHandler into seperat ABCHandler for each voice.
@@ -2893,7 +2927,9 @@ class ABCHandler:
         """
         active_voice = []
         voices = { '1': active_voice }
+        lyrics = { '1': active_voice }
         tokenIter = iter(self.tokens)
+        voice_id = '1'
 
         header = []
         for token in tokenIter:
@@ -2927,15 +2963,24 @@ class ABCHandler:
                 else:
                     active_voice = []
                     voices[voice_id] = active_voice
+                    lyrics[voice_id] = []
+
+            if isinstance(token, ABCLyrics):
+                lyrics[voice_id].append(token)
+
             active_voice.append(token)
 
         voice_handler = []
         # Create a new Handler for each voice with the header tokens first.
-        for tokens in voices.values():
+        for voice_id, tokens in voices.items():
             vh = ABCHandler(tokens=header+tokens, abcVersion=self.abcVersion)
             if vh.hasNotes():
                 voice_handler.append(vh)
+                if voice_id in lyrics:
+                    vh.lyrics = lyrics[voice_id]
+
         return voice_handler
+
 
     def splitByMeasure(self) -> List['ABCHandlerBar']:
         '''
@@ -3831,4 +3876,4 @@ if __name__ == '__main__':
 
     s = music21.converter.parse(avem)
     s.show()
-    music21.mainTest(Test)
+    #music21.mainTest(Test)
