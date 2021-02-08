@@ -50,6 +50,14 @@ def get_score_groups(src):
     # @TODO: Grouping staffs of voices
     pass
 
+"""
+- 	(hyphen) break between syllables within a word
+_ 	(underscore) previous syllable is to be held for an extra note
+* 	one note is skipped (i.e. * is equivalent to a blank syllable)
+~ 	appears as a space; aligns multiple words under one note
+\- 	appears as hyphen; aligns multiple syllables under one note
+| 	advances to the next bar
+"""
 def add_lyric(p: stream.Stream, abcHandler: 'abcFormat.ABCHandler'):
     """
     Adds Lyrik from the tokens of the abcHandler to the notes of the
@@ -341,12 +349,12 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                 dst.coreAppend(mmObj)
 
         elif isinstance(t, (abcFormat.ABCGeneralNote, abcFormat.ABCMark)):
-            if isinstance(t, abcFormat.ABCGeneralNote) and t.lyrics
-                LYRICS_ITERATOR = [iter(l) for l in t.lyrics]
+            # if isinstance(t, abcFormat.ABCGeneralNote) and t.lyrics
+            #     LYRICS_ITERATOR = [iter(l) for l in t.lyrics]
 
-            if LYRICS_ITERATOR:
-                # @TODO: wrong ..
-                pass
+            # if LYRICS_ITERATOR:
+            #     # @TODO: wrong ..
+            #     pass
             # add the attached chord symbol
             n = t.m21Object()
             if n is None:

@@ -3793,8 +3793,11 @@ _DOC_ORDER = [ABCFile, ABCHandler, ABCHandlerBar]
 
 if __name__ == '__main__':
     import music21
+
+    us = environment.UserSettings()
+    us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
-    with pathlib.Path('avemaria.abc').open() as f:
+    with pathlib.Path('Unendliche_Freude.abc').open() as f:
         avem = f.read()
 
     s = music21.converter.parse(avem)
