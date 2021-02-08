@@ -2232,7 +2232,8 @@ class ABCHandler:
         self.lastBrokenRhythm = None
         self.accidental_propagation = self._accidentalPropagation()
         self.lyrics = None
-        self.lastLyricBlock = None
+        # On this Note, starts the last known lyric line(s)
+        self.lastLyricNote: ABCGeneralNote = None
 
     @property
     def abcVersion(self):
@@ -2478,11 +2479,9 @@ class ABCHandler:
             token.brokenRyhtmModifier = self.lastBrokenRhythm.right
             self.lastBrokenRhythm = None
 
-        if self.lastLyricBlock is None or self.lastLyricBlock.lines:
-            # If the LyricsBlock is not Empty start a new LyricBlock
-            self.lastLyricBlock = ABCLyricBlock()
-            # insert the new LyricsBlock in the token list
-            self.tokens.append(self.lastLyricBlock)
+        if self.lastLyricNote is None or self.lastLyricNote.lyrics:
+            # If lastLyricNote has lyrics, we start a new lyric line with this note
+            self.lastLyricNote = token
 
         self.lastNoteToken = token
 
@@ -2499,11 +2498,10 @@ class ABCHandler:
         self.lastGraceToken = None
 
     def process_ABCLyrics(self, token: ABCLyrics):
-
-        if self.lastLyricBlock is None:
-            environLocal.printDebug(['Lyrics without Notes found'])
+        if self.lastLyricNote is None:
+            environLocal.printDebug(['Found lyrics but no notes to align'])
         else:
-            self.lastLyricBlock.lines.append(token)
+            self.lastLyricNote.lyrics.append(token)
 
 
     def process_ABCMetadata(self, token: ABCMetadata):
@@ -2602,11 +2600,8 @@ class ABCHandler:
         method of one of his base classes.
         '''
 
-        # we build self.tokens new
-        # because we have to insert lyric blocks and userdefined tokens
-        _tokens = self.tokens
-        tokenIter = iter(_tokens)
-        self.tokens = []
+        tokens = []
+        tokenIter = iter(self.tokens)
 
         while True:
             # get a token from the token iteratur until the StopIteration exception has raised
@@ -2644,10 +2639,11 @@ class ABCHandler:
                 if token_process_method is not None:
                     token_process_method(token)
 
-                self.tokens.append(token)
+                tokens.append(token)
 
             except StopIteration:
                 # replace tokens with the collected tokens
+                self.tokens = tokens
                 break
 
     def process(self, strSrc: str) -> None:

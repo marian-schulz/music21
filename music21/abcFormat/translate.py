@@ -287,7 +287,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     return p
 
 
-LYRICS_ITERATOR = None
+LYRIC_VERSES_ITERATOR = None
 
 def parseTokens(mh, dst, p, useMeasures, spannerBundle):
     '''
@@ -314,6 +314,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                         voice_data[voice]['MIDI'] = instrument
                     except ABCTranslateException as e:
                         environLocal.printDebug([e])
+
                 #elif i_key == 'SCORE':
                 #    try:
                 #        score = get_score_groups(i_data)
@@ -356,6 +357,13 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                 dst.coreAppend(mmObj)
 
         elif isinstance(t, (abcFormat.ABCGeneralNote, abcFormat.ABCMark)):
+            if isinstance(t, abcFormat.ABCGeneralNote)
+                if  t.lyrics:
+                    # we found lyrics atached to this note
+                    # initialize iterators for each verse in the lyrics.
+                    LYRIC_VERSES_ITERATOR = [ iter(verse.get_words()) for verse in t.lyrics]
+
+
             n = t.m21Object()
             if n is None:
                 environLocal.printDebug([f'M21Object for token "{t} is None.'])
