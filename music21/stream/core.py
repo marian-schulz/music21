@@ -21,24 +21,27 @@ remain stable.
 
 All functions here will eventually begin with `.core`.
 '''
-# pylint: disable=attribute-defined-outside-init
 from typing import List, Dict, Union, Tuple
 from fractions import Fraction
 import unittest
 
 from music21.base import Music21Object
+from music21.common.enums import OffsetSpecial
+from music21.common.numberTools import opFrac
 from music21 import spanner
 from music21 import tree
 from music21.exceptions21 import StreamException, ImmutableStreamException
 
-OFFSET_STRING_VALUES = {'highestTime', 'lowestOffset', 'highestOffset'}
-
+# pylint: disable=attribute-defined-outside-init
 class StreamCoreMixin:
+    '''
+    Core aspects of a Stream's behavior.  Any of these can change at any time.
+    '''
     def __init__(self):
         # hugely important -- keeps track of where the _elements are
         # the _offsetDict is a dictionary where id(element) is the
         # index and the value is a tuple of offset and element.
-        # offsets can be floats, Fractions, or the special string 'highestTime'
+        # offsets can be floats, Fractions, or a member of the enum OffsetSpecial
         self._offsetDict: Dict[int, Tuple[Union[float, Fraction, str], Music21Object]] = {}
 
         # self._elements stores Music21Object objects.
@@ -105,7 +108,7 @@ class StreamCoreMixin:
                         if highestSortTuple < thisSortTuple:
                             storeSorted = True
 
-        self.setElementOffset(
+        self.coreSetElementOffset(
             element,
             float(offset),  # why is this not opFrac?
             addElement=True,
@@ -136,7 +139,7 @@ class StreamCoreMixin:
         # NOTE: this is not called by append, as that is optimized
         # for looping multiple elements
         ht = self.highestTime
-        self.setElementOffset(element, ht, addElement=True)
+        self.coreSetElementOffset(element, ht, addElement=True)
         element.sites.add(self)
         # need to explicitly set the activeSite of the element
         if setActiveSite:
@@ -151,13 +154,54 @@ class StreamCoreMixin:
     # adding and editing Elements and Streams -- all need to call coreElementsChanged
     # most will set isSorted to False
 
+    def coreSetElementOffset(
+        self,
+        element: Music21Object,
+        offset: Union[int, float, Fraction, str],
+        *,
+        addElement=False,
+        setActiveSite=True
+    ):
+        '''
+        Sets the Offset for an element, very quickly.
+        Caller is responsible for calling :meth:`~music21.stream.core.coreElementsChanged`
+        afterward.
+
+        >>> s = stream.Stream()
+        >>> s.id = 'Stream1'
+        >>> n = note.Note('B-4')
+        >>> s.insert(10, n)
+        >>> n.offset
+        10.0
+        >>> s.coreSetElementOffset(n, 20.0)
+        >>> n.offset
+        20.0
+        >>> n.getOffsetBySite(s)
+        20.0
+        '''
+        # Note: not documenting 'highestTime' is on purpose, since can only be done for
+        # elements already stored at end.  Infinite loop.
+        try:
+            offset = opFrac(offset)
+        except TypeError:
+            if offset not in OffsetSpecial:  # pragma: no cover
+                raise StreamException(f'Cannot set offset to {offset!r} for {element}')
+
+        idEl = id(element)
+        if not addElement and idEl not in self._offsetDict:
+            raise StreamException(
+                f'Cannot set the offset for element {element}, not in Stream {self}.')
+        self._offsetDict[idEl] = (offset, element)  # fast
+        if setActiveSite:
+            self.coreSelfActiveSite(element)
+
     def coreElementsChanged(
         self,
         *,
         updateIsFlat=True,
         clearIsSorted=True,
         memo=None,
-        keepIndex=False
+        keepIndex=False,
     ):
         '''
         NB -- a "core" stream method that is not necessary for most users.
@@ -193,6 +237,9 @@ class StreamCoreMixin:
 
         if memo is None:
             memo = []
+
+        if id(self) in memo:
+            return
         memo.append(id(self))
 
         # WHY??? THIS SEEMS OVERKILL, esp. since the first call to .sort() in .flat will
@@ -214,7 +261,7 @@ class StreamCoreMixin:
         # always be a good idea since .flat has changed etc.
         # should not need to do derivation.origin sites.
         for livingSite in self.sites:
-            livingSite.coreElementsChanged()
+            livingSite.coreElementsChanged(memo=memo)
 
         # clear these attributes for setting later
         if clearIsSorted:
@@ -353,7 +400,7 @@ class StreamCoreMixin:
         Core method for adding end elements.
         To be called by other methods.
         '''
-        self.setElementOffset(element, 'highestTime', addElement=True)
+        self.coreSetElementOffset(element, OffsetSpecial.AT_END, addElement=True)
         element.sites.add(self)
         # need to explicitly set the activeSite of the element
         if setActiveSite:

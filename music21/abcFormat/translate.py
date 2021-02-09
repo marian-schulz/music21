@@ -34,6 +34,7 @@ from music21 import tie
 from music21 import articulations
 from music21 import note
 from music21 import chord
+from music21.duration import GraceDuration
 from music21 import spanner
 from music21 import harmony
 from music21 import instrument
@@ -154,6 +155,8 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     barCount = 0
     measureNumber = 1
     # merged handler are ABCHandlerBar objects, defining attributes for barlines
+    global LYRIC_VERSES_ITERATOR
+    LYRIC_VERSES_ITERATOR = []
 
     for mh in mergedHandlers:
         # if use measures and the handler has notes; otherwise add to part
@@ -247,8 +250,8 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
                 measureNumber += 1
             p.coreAppend(dst)
 
-    if abcHandler.lyrics:
-        add_lyrics(p, abcHandler.lyrics)
+    #if abcHandler.lyrics:
+   #    add_lyrics(p, abcHandler.lyrics)
 
     try:
         pass
@@ -287,7 +290,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     return p
 
 
-LYRICS_ITERATOR = None
+LYRIC_VERSES_ITERATOR = []
 
 def parseTokens(mh, dst, p, useMeasures, spannerBundle):
     '''
@@ -303,7 +306,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
     score = {}
     postTransposition = None
     clefSet = False
-
+    skip_measure = False
     for t in mh.tokens:
         if isinstance(t, abcFormat.ABCMetadata):
             if t.isInstruction():
@@ -314,6 +317,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                         voice_data[voice]['MIDI'] = instrument
                     except ABCTranslateException as e:
                         environLocal.printDebug([e])
+
                 #elif i_key == 'SCORE':
                 #    try:
                 #        score = get_score_groups(i_data)
@@ -356,6 +360,13 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                 dst.coreAppend(mmObj)
 
         elif isinstance(t, (abcFormat.ABCGeneralNote, abcFormat.ABCMark)):
+            if isinstance(t, abcFormat.ABCGeneralNote):
+                global LYRIC_VERSES_ITERATOR
+                if t.lyrics:
+                    # we found lyrics atached to this note
+                    # initialize iterators for each verse in the lyrics.
+                    LYRIC_VERSES_ITERATOR = [ iter(verse.syllables) for verse in t.lyrics]
+
             n = t.m21Object()
             if n is None:
                 environLocal.printDebug([f'M21Object for token "{t} is None.'])
@@ -365,6 +376,40 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
         elif isinstance(t, abcFormat.ABCSpanner):
             p.coreInsert(0, t.m21Object())
 
+    for verse_number, verse in enumerate(LYRIC_VERSES_ITERATOR):
+        try:
+            syllable = next(verse)
+        except StopIteration:
+            continue
+        if syllable == '|':
+            continue
+        for n in dst.notesAndRests:
+            # Skip Chordsymbol
+
+            if isinstance(n, harmony.ChordSymbol) or isinstance(n, note.Rest):
+                continue
+
+            if isinstance(n.duration, GraceDuration):
+                continue
+
+            # previous syllable is to be held for an extra note
+            if syllable == '_':
+                continue
+
+            if syllable == '*':
+                n.lyrics.append(note.Lyric(number=verse_number, text=''))
+            else:
+                n.lyrics.append(note.Lyric(number=verse_number, text=syllable))
+
+            try:
+                syllable = next(verse)
+                # one note is skipped (i.e. * is equivalent to a blank syllable
+                if syllable == '|':
+                    break
+
+            except StopIteration:
+                # No lyric is left, stop
+                break
     """
     staffGroup1 = layout.StaffGroup([p1, p2],
 
@@ -384,6 +429,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
             postTransposition = voice_data['TRANSPOSITION']
 
     dst.coreElementsChanged()
+    lyrics = None
     return postTransposition, clefSet, lyrics
 
 
