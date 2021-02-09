@@ -1105,6 +1105,7 @@ class ABCVoice(ABCMetadata, ABCClefMixin):
 class ABCKey(ABCMetadata, ABCClefMixin):
     def __init__(self, src: str):
         r"""
+        This is the Token for the ABC filed 'K:'
         The ABCKey specified a Key or KeySignature.
         However, it can also specify a clef in addition.
         The clef follows after the key and key modifications
@@ -1125,8 +1126,106 @@ class ABCKey(ABCMetadata, ABCClefMixin):
         self.mode: str = None
         self.accidental_modifications: List[str]
 
-    def getKeySiganatureObject(self):
-        pass
+
+    def getKeySignatureObject(self) -> 'music21.key.KeySignature':
+        # noinspection SpellCheckingInspection,PyShadowingNames
+        '''
+        Return a music21 :class:`~music21.key.KeySignature` or :class:`~music21.key.Key`
+        object for this metadata tag.
+        >>> am = abcFormat.ABCMetadata('K:G =F')
+        >>> am.getKeySignatureObject()
+        <music21.key.Key of G major>
+
+        >>> am = abcFormat.ABCMetadata('K:G ^d')
+        >>> ks = am.getKeySignatureObject()
+        >>> ks
+        <music21.key.KeySignature of pitches: [F#, D#]>
+
+        >>> am = abcFormat.ABCMetadata('K:G')
+        >>> ks = am.getKeySignatureObject()
+        >>> ks
+        <music21.key.Key of G major>
+
+        >>> am = abcFormat.ABCMetadata('K:Gmin')
+        >>> ks = am.getKeySignatureObject()
+        >>> ks
+        <music21.key.Key of g minor>
+
+        >>> am = abcFormat.ABCMetadata('K:E exp ^c ^a')
+        >>> ks = am.getKeySignatureObject()
+        >>> ks
+        <music21.key.KeySignature of pitches: [C#, A#]>
+
+        >>> am = abcFormat.ABCMetadata('K:GM')
+        >>> ks = am.getKeySignatureObject()
+        >>> ks
+        <music21.key.Key of g minor>
+
+        >>> am = abcFormat.ABCMetadata('K:Hp')
+        >>> am.getKeySignatureObject()
+        <music21.key.KeySignature of pitches: [F#, C#]>
+
+        >>> am = abcFormat.ABCMetadata('K:HP')
+        >>> am.getKeySignatureObject()
+        <music21.key.KeySignature of no sharps or flats>
+
+        >>> am = abcFormat.ABCMetadata('K:C =c')
+        >>> am.getKeySignatureObject()
+        <music21.key.Key of C major>
+
+        >>> am = abcFormat.ABCMetadata('K:C ^c =c')
+        >>> am.getKeySignatureObject()
+        <music21.key.Key of C major>
+
+        >>> am = abcFormat.ABCMetadata('K:C ^c _c')
+        >>> am.getKeySignatureObject()
+        <music21.key.KeySignature of pitches: [C-]>
+
+        >>> am = abcFormat.ABCMetadata('K:^c _c')
+        >>> am.getKeySignatureObject()
+        <music21.key.KeySignature of pitches: [C-]>
+
+        >>> am = abcFormat.ABCMetadata('K:Db')
+        >>> am.getKeySignatureObject()
+        <music21.key.Key of D- major>
+        '''
+        if not self.isKey():
+            raise ABCTokenException('no key signature associated with this metadata')
+
+        from music21 import key
+        tonic, mode, accidentals = self.getKeySignatureParameters()
+
+        if mode and tonic:
+            ks: key.KeySignature = key.Key(tonic, mode)
+            if accidentals:
+                # Apply the additional altered pitches on the given altered pitches of the key
+                # keyAltPitch = [ p.name[0]: p.name[1:] for p in ks.alteredPitches ]
+                newAltPitch = {p.name[0]: p.name[1:] for p in ks.alteredPitches}
+                for a in accidentals:
+                    note, acc = a[0], a[1:]
+                    if acc == 'n':
+                        # a natural removes a previous setted alteration
+                        if note in newAltPitch:
+                            del newAltPitch[note]
+                    else:
+                        newAltPitch[note] = acc
+
+                # if any pitch in the new altered pitches was not part of the
+                # altered pitches of the key then the key has changed
+                # and we create a Keysignature from the new altered pitches
+                if any(pitch not in ks.alteredPitches for pitch in newAltPitch):
+                    ks = key.KeySignature()
+                    ks.alteredPitches = [f"{n}{a}" for n, a in newAltPitch.items()]
+
+        elif accidentals:
+            # Create a Keysignature from accidentals
+            ks = key.KeySignature()
+            ks.alteredPitches = accidentals
+        else:
+            # With nothing is given we get a Keysignature without any altered pitches
+            ks = key.KeySignature(0)
+
+        return ks
 
         # [clef=]<clef name>[<line number>][+8 | -8] [middle=<pitch>] [transpose=<semitones>] [octave=<number>] [stafflines=<lines>]"
 
