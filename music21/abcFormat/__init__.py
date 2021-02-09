@@ -119,7 +119,7 @@ _pitchTranslationCache = {}
 # note inclusion of w: for lyrics
 RE_ABC_NOTE = re.compile(r'([\^_=]*)([A-Ga-gz])([0-9/\',]*)')
 RE_ABC_VERSION = re.compile(r'(?:((^[^%].*)?[\n])*%abc-)(\d+)\.(\d+)\.?(\d+)?')
-RE_ABC_LYRIC = re.compile(r'[^*\-_ ]+[-]?|[*\-_]')
+
 
 # Type aliases
 ABCVersion = Tuple[int, int, int]
@@ -193,21 +193,22 @@ class ABCToken(prebase.ProtoM21Object):
     def m21Object(self):
         return None
 
+RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
+
 class ABCLyrics(ABCToken):
-    TOKEN_REGEX = r'w:[^|].*(\n[+]:.*)*'
+    TOKEN_REGEX = r'w:.*(\n[+]:.*)*'
     def __init__(self, src: str):
         r'''
-        >>> abc = ('w:A- ve Ma- ri- -|\n+:a! Jung- - - frau *|')
+        >>> abc = ('w: ||A- ve Ma- ri- -|a! Jung- - - frau *|')
         >>> ah = abcFormat.ABCHandler()
         >>> w = ah.tokenize(abc)
-        >>> w[0].get_words()
-        ['A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
+        >>> w[0].syllables
+        ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
         '''
         super().__init__(src[2:].replace('\n+:',' '))
 
-    def get_words(self) -> List[str]:
-        return [s.strip() for s in RE_ABC_LYRIC.findall(self.src)]
-
+        self.syllables = [s for s in RE_ABC_LYRICS.findall(self.src)]
+        #breakpoint()
 
 class ABCLyricBlock(ABCToken):
     """
@@ -2873,12 +2874,6 @@ class ABCHandler:
                     return True
         return False
 
-    def processLyrics(self):
-        """
-        Map lyrics to notes
-        """
-        # hmm we need measures for lyric mapping
-        pass
 
     def splitByVoice(self) -> List['ABCHandler']:
         """
@@ -2923,7 +2918,6 @@ class ABCHandler:
         """
         active_voice = []
         voices = { '1': active_voice }
-        lyrics = { '1': active_voice }
         tokenIter = iter(self.tokens)
         voice_id = '1'
 
@@ -2959,10 +2953,6 @@ class ABCHandler:
                 else:
                     active_voice = []
                     voices[voice_id] = active_voice
-                    lyrics[voice_id] = []
-
-            if isinstance(token, ABCLyrics):
-                lyrics[voice_id].append(token)
 
             active_voice.append(token)
 
@@ -2972,8 +2962,6 @@ class ABCHandler:
             vh = ABCHandler(tokens=header+tokens, abcVersion=self.abcVersion)
             if vh.hasNotes():
                 voice_handler.append(vh)
-                if voice_id in lyrics:
-                    vh.lyrics = lyrics[voice_id]
 
         return voice_handler
 
@@ -3863,7 +3851,7 @@ _DOC_ORDER = [ABCFile, ABCHandler, ABCHandlerBar]
 
 if __name__ == '__main__':
     import music21
-
+    #music21.mainTest(Test)
     #us = environment.UserSettings()
     #us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
@@ -3872,4 +3860,4 @@ if __name__ == '__main__':
 
     s = music21.converter.parse(avem)
     s.show()
-    #music21.mainTest(Test)
+
