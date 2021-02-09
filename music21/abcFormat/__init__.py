@@ -101,17 +101,6 @@ ABC_BARS = [
 ]
 
 # Specification & regular expression of a voice metadata field
-VOICE_SPEC = {
-    'id': '^\S*',
-    'name': '(name|nm)\s*=\s*\S+',
-    'clef': 'clef\s*=\s*\S+',
-    'middle': 'middle\s*=\s*\S+',
-    'tags': '[^= ]+',
-    'subname': '(subname|snm)\s*=\s*\S+',
-    'transpose': 'transpose\s*=\s*[\-+]?[1-9][0-9]',
-    'octave': 'octave\s*=\s*[0-9]'
-}
-VOICE_RE = re.compile(r'|'.join(f'(?P<{k}>{v})' for k, v in VOICE_SPEC.items()))
 
 # store a mapping of ABC representation to pitch values
 _pitchTranslationCache = {}
@@ -193,42 +182,6 @@ class ABCToken(prebase.ProtoM21Object):
 
     def m21Object(self):
         return None
-
-
-RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
-
-
-class ABCLyrics(ABCToken):
-    #TOKEN_REGEX = r'w:.*(\n[+]:.*)*|w:.*([\\][\n]w:.*)*'
-    TOKEN_REGEX = r'w:.*((([\][\n]w)|([\n][+])):.*)*'
-    def __init__(self, src: str):
-        r'''
-        >>> abc = ('w: ||A- ve Ma- ri- -\\\nw: |a! Jung- - - frau *|')
-        >>> ah = abcFormat.ABCHandler()
-        >>> w = ah.tokenize(abc)
-        >>> w[0].syllables
-        ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
-
-        >>> abc = ('w: |\n+:|A- ve Ma- ri- -\\\nw: |a! Jung- - - frau *|')
-        >>> ah = abcFormat.ABCHandler()
-        >>> w = ah.tokenize(abc)
-        >>> w[0].syllables
-        ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
-
-        >>> abc = ('w: ||A- ve Ma- ri- -|a! Jung- - - frau *|')
-        >>> ah = abcFormat.ABCHandler()
-        >>> w = ah.tokenize(abc)
-        >>> w[0].syllables
-        ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
-
-        '''
-
-        src = " ".join(s[2:].strip(r'\\') for s in src.split('\n'))
-        super().__init__(src)
-
-        self.syllables = [s for s in RE_ABC_LYRICS.findall(self.src)]
-        #breakpoint()
-
 
 class ABCMark(ABCToken):
     '''
@@ -423,8 +376,7 @@ class ABCDecoration(ABCToken):
                 return ABCDynamic(src)
             raise ABCTokenException(f'Unknown abc decoration "{src}"')
 
-
-class ABCMetadata(ABCToken):
+class ABCMetadata2(ABCToken):
     r'''
     Defines a token of metadata in ABC.
 
@@ -548,34 +500,6 @@ class ABCMetadata(ABCToken):
         if self.tag == 'Q':
             return True
         return False
-
-    def getVoiceData(self) -> Dict:
-        """
-        Get data from a voice field.
-        Except for the 'id' (always first), the voice data fields can be in any order.
-
-        >>> md = abcFormat.ABCMetadata('V:1 name="piano" clef=treble ')
-        >>> md.getVoiceData()
-        {'id': '1', 'tags': [], 'name': 'piano', 'clef': 'treble'}
-
-        >>> md = abcFormat.ABCMetadata('V:1 treble ')
-        >>> md.getVoiceData()
-        {'id': '1', 'tags': ['treble']}
-        """
-        data = {'id': None, 'tags': []}
-        for m in VOICE_RE.finditer(self.data):
-            key = m.lastgroup
-            value = m.group()
-            if key == 'tags':
-                data[key].append(value)
-            elif key == 'id':
-                data[key] = value
-            else:
-                # remove leading '<property_name>='
-                value = value.split('=', 1)[1]
-                # remove enclosing apostrophes
-                data[key] = value.strip('"')
-        return data
 
     def getUserDefined(self) -> Tuple[str, Optional[List[ABCToken]]]:
         symbol, definition = self.data.split('=')
@@ -1044,6 +968,201 @@ class ABCInlineMetadata(ABCMetadata):
     def __init__(self, src: str):
         super().__init__(src[1:-1])
 
+from music21 import clef
+
+CLEF_RE =  r'(?P<name>clef\s*=\s*\S+(?!\S))'
+CLEF_RE += r'|(?P<octave>octave=.*(?!\S))'
+CLEF_RE += r'|(?P<transpose>t(ranspose)?\s*=\s*[+\-]?[0-9]+(?!\S))'
+CLEF_RE += r'|(?P<unamed>[^=]+?(?!\S))'
+CLEF_RE = re.compile(CLEF_RE, re.MULTILINE)
+
+class ABCClefMixin():
+    """
+    The clefs with the +/-8 at then end transpose the melody an octave
+    up or down if no octave modifier has explicitly set.
+    When specifying the name, the 'clef=' can also be omitted
+
+    >>> md = abcFormat.ABCClefMixin('clef=treble')
+    >>> md.name
+    'treble'
+
+    >>> md = abcFormat.ABCClefMixin('bass-8')
+    >>> md.clef
+    <music21.clef.Bass8vbClef>
+    >>> md.octave
+    -1
+
+    >>> md = abcFormat.ABCClefMixin('clef="treble+8"')
+    >>> md.clef
+    <music21.clef.Treble8vaClef>
+    >>> md.octave
+    1
+
+    >>> md = abcFormat.ABCClefMixin('clef=treble+8 octave=-2')
+    >>> md.clef
+    <music21.clef.Treble8vaClef>
+    >>> md.octave
+    -2
+    """
+    CLEF_NAMES = {
+        'G1': clef.FrenchViolinClef,
+        'treble': clef.TrebleClef, 'g2': clef.TrebleClef,
+        'treble-8': clef.Treble8vbClef, 'treble+8': clef.Treble8vaClef,
+        'bass3': clef.CBaritoneClef, 'baritone': clef.CBaritoneClef,
+        'f3': clef.CBaritoneClef, 'bass': clef.BassClef,
+        'f4': clef.BassClef, 'bass-8': clef.Bass8vbClef,
+        'bass+8': clef.Bass8vaClef, 'f5': clef.SubBassClef,
+        'tenor': clef.TenorClef, 'c4': clef.TenorClef,
+        'alto': clef.AltoClef, 'c3': clef.AltoClef,
+        'alto1': clef.SopranoClef, 'soprano': clef.SopranoClef,
+        'c1': clef.SopranoClef, 'alto2': clef.MezzoSopranoClef,
+        'mezzosoprano': clef.MezzoSopranoClef, 'c2': clef.MezzoSopranoClef
+    }
+
+    def __init__(self, data: str):
+        self.transpose = 0
+        self.name = None
+        self.octave = None
+        self.clef = None
+
+        # list of unamed matches
+        unamed  = []
+        for m in CLEF_RE.finditer(data):
+            k = m.lastgroup
+            v = m.group()
+            if k in ['transpose', 'octave', 'name']:
+                setattr(self, k, v.split('=')[1].strip().strip('"'))
+            else:
+                unamed.append(v.strip())
+
+        # the clef name is allowed without clef=<name>
+        if self.name is None:
+            for tag in unamed:
+                if tag in ABCClefMixin.CLEF_NAMES:
+                    self.name = tag
+                    break
+
+        if self.name:
+            self.clef = ABCClefMixin.CLEF_NAMES[self.name]()
+
+        if self.octave is None:
+            self.octave = self.clef.octaveChange if self.clef else 0
+        else:
+            self.octave = int(self.octave)
+
+        # currenty unused
+        self.transpose = int(self.transpose)
+
+
+class ABCMetadata(ABCToken):
+    def __int__(self, src):
+        super().__init__(src)
+        if src.startswith('['):
+            self.inlined = True
+            src = src[1:-1]
+        else:
+            self.inlined = False
+
+        parts = src.split(':', 1)
+        self.tag: str = parts[0].strip()
+        # remove comments
+        self.data: str = parts[1].split('%', 1)[0].strip()
+
+
+VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*\S+)|(?P<subname>(subname|snm)\s*=\s*\S+)')
+class ABCVoice(ABCMetadata, ABCClefMixin):
+    def __init__(self, data):
+        r"""
+        >>> v = abcFormat.ABCVoice('V:1 nm="piano" subname=accompaniment')
+        >>> v.id
+        '1'
+        >>> v.name
+        'piano'
+        >>> v.subname
+        'accompaniment'
+
+        We got also clef informations from a voice field
+        >>> v = abcFormat.ABCVoice("V:1 treble")
+        >>> v.clef
+        'treble'
+        """
+        super().__init__(src)
+        ABCClefMixin.__init__(self, self.data)
+        self.id : str = ''
+        self.name : Optional[str] = None
+        self.subname: Optional[str] = None
+        for m in VOICE_RE.finditer(self.data):
+            k = m.lastgroup
+            v = m.group()
+            if k == 'id':
+                self.id = v
+            elif k == 'name':
+                self.name = v.split('=')[1].strip().strip('"')
+            elif k == 'subname':
+                self.subname = v.split('=')[1].strip().strip('"')
+
+
+class ABCKey(ABCMetadata, ABCClefMixin):
+    def __init__(self, src: str):
+        r"""
+        The ABCKey specified a Key or KeySignature.
+        However, it can also specify a clef in addition.
+        The clef follows after the key and key modifications
+
+        >>> k = abcFormat.ABCVoice("K:Cm")
+        >>> k.getKeySignatureObject()
+
+        We got also clef informations from a key field
+        >>> v = abcFormat.ABCVoice("K:C treble")
+        >>> v.clef
+        'treble'
+        """
+
+        super().__init__(src)
+        ABCClefMixin.__init__(self, self.data)
+
+        self.tonic: str = None
+        self.mode: str = None
+        self.accidental_modifications: List[str]
+
+    def getKeySiganatureObject(self):
+        pass
+
+        # [clef=]<clef name>[<line number>][+8 | -8] [middle=<pitch>] [transpose=<semitones>] [octave=<number>] [stafflines=<lines>]"
+
+RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
+
+
+class ABCLyrics(ABCToken):
+
+    TOKEN_REGEX = r'w:.*((([\][\n]w)|([\n][+])):.*)*'
+    def __init__(self, src: str):
+        r'''
+        >>> abc = ('w: ||A- ve Ma- ri- -\\\nw: |a! Jung- - - frau *|')
+        >>> ah = abcFormat.ABCHandler()
+        >>> w = ah.tokenize(abc)
+        >>> w[0].syllables
+        ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
+
+        >>> abc = ('w: |\n+:|A- ve Ma- ri- -\\\nw: |a! Jung- - - frau *|')
+        >>> ah = abcFormat.ABCHandler()
+        >>> w = ah.tokenize(abc)
+        >>> w[0].syllables
+        ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
+
+        >>> abc = ('w: ||A- ve Ma- ri- -|a! Jung- - - frau *|')
+        >>> ah = abcFormat.ABCHandler()
+        >>> w = ah.tokenize(abc)
+        >>> w[0].syllables
+        ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
+
+        '''
+
+        src = " ".join(s[2:].strip(r'\\') for s in src.split('\n'))
+        super().__init__(src)
+
+        self.syllables = [s for s in RE_ABC_LYRICS.findall(self.src)]
+        #breakpoint()
 
 class ABCDirective(ABCToken):
     """
@@ -3864,5 +3983,5 @@ if __name__ == '__main__':
     with pathlib.Path('Unendliche_Freude.abc').open() as f:
         avem = f.read()
 
-    s = music21.converter.parse(avem)
-    s.show()
+    #s = music21.converter.parse(avem)
+    #s.show()

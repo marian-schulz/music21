@@ -48,44 +48,6 @@ environLocal = environment.Environment('abcFormat.translate')
 class ABCTranslateException(exceptions21.Music21Exception):
     pass
 
-def get_clefObj(clef_str, octave) -> (clef.Clef, interval.Interval):
-    CLEF_RE = re.compile(r '^(clef=)(P?<clef_name>)[<line number>][+8 | -8] [middle=<pitch>] [transpose=<semitones>] [octave=<number>] [stafflines=<lines>]'
-
-    )
-    """
-    Treble 	K:treble
-    Bass 	K:bass
-    Baritone 	K:bass3
-    Tenor 	K:tenor
-    Alto 	K:alto
-    Mezzosoprano 	K:alto2
-    Soprano 	K:alto1
-    """
-    {
-        'treble': clef.TrebleClef
-        'treble-8': clef.Treble8vbClef
-        'bass':
-        'bass3':
-        'tenor':
-        'alto':
-        'alto1':
-        'alto2':
-    }
-
-    Treble
-    K: treble
-    Bass
-    K: bass
-    Baritone
-    K: bass3
-    Tenor
-    K: tenor
-    Alto
-    K: alto
-
-    K: alto2
-    Soprano
-    K: alto1
 def get_score_groups(src):
     # @TODO: Grouping staffs of voices
     pass
