@@ -34,6 +34,7 @@ from music21 import tie
 from music21 import articulations
 from music21 import note
 from music21 import chord
+from music21 import interval
 from music21.duration import GraceDuration
 from music21 import spanner
 from music21 import harmony
@@ -47,37 +48,44 @@ environLocal = environment.Environment('abcFormat.translate')
 class ABCTranslateException(exceptions21.Music21Exception):
     pass
 
-def add_lyrics(p: stream.Part, lyrics: List['ABCLyrics']):
+def get_clefObj(clef_str, octave) -> (clef.Clef, interval.Interval):
+    CLEF_RE = re.compile(r '^(clef=)(P?<clef_name>)[<line number>][+8 | -8] [middle=<pitch>] [transpose=<semitones>] [octave=<number>] [stafflines=<lines>]'
+
+    )
     """
-    Adds Lyrik from the tokens of the abcHandler to the notes of the
-    Stream.
+    Treble 	K:treble
+    Bass 	K:bass
+    Baritone 	K:bass3
+    Tenor 	K:tenor
+    Alto 	K:alto
+    Mezzosoprano 	K:alto2
+    Soprano 	K:alto1
     """
+    {
+        'treble': clef.TrebleClef
+        'treble-8': clef.Treble8vbClef
+        'bass':
+        'bass3':
+        'tenor':
+        'alto':
+        'alto1':
+        'alto2':
+    }
 
-    # iterate over bars & there notes
+    Treble
+    K: treble
+    Bass
+    K: bass
+    Baritone
+    K: bass3
+    Tenor
+    K: tenor
+    Alto
+    K: alto
 
-
-    # for the first step we did only one lyric line
-    lyric = lyrics[0]
-    for e in p.flat.notes:
-        if isinstance(e, harmony.ChordSymbol):
-            continue
-        try:
-            syl = next(lyric).strip()
-            while not syl:
-                syl = next(lyric).strip()
-                # skip empty words
-                if syl:
-                    break
-            if syl == '_':
-                continue
-            if syl == '*':
-                # a blank syllable
-                continue
-            e.lyric = syl
-        except StopIteration:
-            # No lyric is left, stop
-            break
-
+    K: alto2
+    Soprano
+    K: alto1
 def get_score_groups(src):
     # @TODO: Grouping staffs of voices
     pass
@@ -155,8 +163,8 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     barCount = 0
     measureNumber = 1
     # merged handler are ABCHandlerBar objects, defining attributes for barlines
-    global LYRIC_VERSES_ITERATOR
-    LYRIC_VERSES_ITERATOR = []
+    global LYRIC_VERSES
+    LYRIC_VERSES = []
 
     for mh in mergedHandlers:
         # if use measures and the handler has notes; otherwise add to part
@@ -268,7 +276,11 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
             p.coreInsert(0, clef.bestClef(p, recurse=True))
 
     if postTransposition != 0:
-        p.transpose(postTransposition, inPlace=True)
+        from music21 import interval
+        p.transpose(
+            interval.Interval(
+                diatonic=interval.ChromaticInterval(postTransposition).getDiatonic())
+            , inPlace=True)
 
     if useMeasures and p.recurse().getElementsByClass('TimeSignature'):
         # call make beams for now; later, import beams
@@ -290,7 +302,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     return p
 
 
-LYRIC_VERSES_ITERATOR = []
+LYRIC_VERSES = []
 
 def parseTokens(mh, dst, p, useMeasures, spannerBundle):
     '''
@@ -298,7 +310,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
     '''
     # in case need to transpose due to clef indication
     from music21 import abcFormat
-
+    global LYRIC_VERSES
     voice_id = None
     # is a dictonary of dictonaries
     # { voive_id: { property_key: data }}
@@ -340,7 +352,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
             elif t.isKey():
                 ks = t.getKeySignatureObject()
                 if useMeasures:  # assume at start of measures
-                    dst.keySignature = ks
+                    p.keySignature = ks
                 else:
                     dst.coreAppend(ks)
                 # check for clef information sometimes stored in key
@@ -350,7 +362,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                     # environLocal.printDebug(['found clef in key token:', t,
                     #     clefObj, transposition])
                     if useMeasures:  # assume at start of measures
-                        dst.clef = clefObj
+                        p.clef = clefObj
                     else:
                         dst.coreAppend(clefObj)
                     postTransposition = transposition
@@ -361,11 +373,9 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
 
         elif isinstance(t, (abcFormat.ABCGeneralNote, abcFormat.ABCMark)):
             if isinstance(t, abcFormat.ABCGeneralNote):
-                global LYRIC_VERSES_ITERATOR
                 if t.lyrics:
                     # we found lyrics atached to this note
-                    # initialize iterators for each verse in the lyrics.
-                    LYRIC_VERSES_ITERATOR = [ iter(verse.syllables) for verse in t.lyrics]
+                    LYRIC_VERSES = [ verse.syllables for verse in t.lyrics ]
 
             n = t.m21Object()
             if n is None:
@@ -376,21 +386,32 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
         elif isinstance(t, abcFormat.ABCSpanner):
             p.coreInsert(0, t.m21Object())
 
-    for verse_number, verse in enumerate(LYRIC_VERSES_ITERATOR):
-        try:
-            syllable = next(verse)
-        except StopIteration:
+
+    for verse_number, verse in enumerate(LYRIC_VERSES):
+        if verse:
+            # look at the first syllable and skip the measure on '|'
+            if verse[0] == '|':
+                verse.pop(0)
+                continue
+        else:
             continue
-        if syllable == '|':
-            continue
+
+        # start alligning syllable to notes
         for n in dst.notesAndRests:
-            # Skip Chordsymbol
-
-            if isinstance(n, harmony.ChordSymbol) or isinstance(n, note.Rest):
+            if isinstance(n, (harmony.ChordSymbol, note.Rest)) \
+                or isinstance(n.duration, GraceDuration):
+                # Do not allign syllables to Chordsymbols, Rests and Gracenotes
                 continue
 
-            if isinstance(n.duration, GraceDuration):
-                continue
+            if verse:
+                syllable = verse[0]
+                verse.pop(0)
+            else:
+                break
+
+            # skip the measure
+            if syllable == '|':
+                break
 
             # previous syllable is to be held for an extra note
             if syllable == '_':
@@ -401,15 +422,7 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
             else:
                 n.lyrics.append(note.Lyric(number=verse_number, text=syllable))
 
-            try:
-                syllable = next(verse)
-                # one note is skipped (i.e. * is equivalent to a blank syllable
-                if syllable == '|':
-                    break
 
-            except StopIteration:
-                # No lyric is left, stop
-                break
     """
     staffGroup1 = layout.StaffGroup([p1, p2],
 
@@ -637,8 +650,6 @@ def reBar(music21Part, *, inPlace=False):
 
     if not inPlace:
         return music21Part
-
-
 
 
 # ------------------------------------------------------------------------------
