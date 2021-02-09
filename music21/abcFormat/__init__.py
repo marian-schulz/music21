@@ -1126,6 +1126,166 @@ class ABCKey(ABCMetadata, ABCClefMixin):
         self.mode: str = None
         self.accidental_modifications: List[str]
 
+    def keyObject(self):
+
+
+    def _getKeySignatureParameters(self) -> Tuple[str, str, List[str]]:
+        # noinspection SpellCheckingInspection
+        '''
+        Extract key signature parameters, include indications for mode,
+        tonic and alterted pitches of the key signature.
+        All values were translated into m21 compatible notation.
+        return Tuple[<tonic: str>, <mode: str>, List[<altertedPitch: str>]]
+
+        >>> from music21 import abcFormat
+
+        >>> am = abcFormat.ABCMetadata('K:E exp ^c _a')
+        >>> am.getKeySignatureParameters()
+        ('E', None, ['C#', 'A-'])
+
+        >>> am = abcFormat.ABCMetadata('K:^c _c')
+        >>> am.getKeySignatureParameters()
+        (None, None, ['C-'])
+
+        >>> am = abcFormat.ABCMetadata('K:_c =c clef=alto')
+        >>> am.getKeySignatureParameters()
+        (None, None, ['Cn'])
+
+        >>> am = abcFormat.ABCMetadata('K:')
+        >>> am.getKeySignatureParameters()
+        (None, None, [])
+
+        >>> am = abcFormat.ABCMetadata('K: exp ^c ^f clef=alto')
+        >>> am.getKeySignatureParameters()
+        (None, None, ['C#', 'F#'])
+
+        >>> am = abcFormat.ABCMetadata('K:Eb Lydian')
+        >>> am.getKeySignatureParameters()
+        ('E-', 'lydian', [])
+
+        >>> am = abcFormat.ABCMetadata('K:C ^d')
+        >>> am.getKeySignatureParameters()
+        ('C', 'major', ['D#'])
+
+        >>> am = abcFormat.ABCMetadata('K:APhry clef=alto')
+        >>> am.getKeySignatureParameters()
+        ('A', 'phrygian', [])
+
+        >>> am = abcFormat.ABCMetadata('K:G Mixolydian')
+        >>> am.getKeySignatureParameters()
+        ('G', 'mixolydian', [])
+
+        >>> am = abcFormat.ABCMetadata('K: Edor')
+        >>> am.getKeySignatureParameters()
+        ('E', 'dorian', [])
+
+        >>> am = abcFormat.ABCMetadata('K: F')
+        >>> am.getKeySignatureParameters()
+        ('F', 'major', [])
+
+        >>> am = abcFormat.ABCMetadata('K:G')
+        >>> am.getKeySignatureParameters()
+        ('G', 'major', [])
+
+        >>> am = abcFormat.ABCMetadata('K:Gm')
+        >>> am.getKeySignatureParameters()
+        ('G', 'minor', [])
+
+        >>> am = abcFormat.ABCMetadata('K:Hp')
+        >>> am.getKeySignatureParameters()
+        ('D', None, ['F#', 'C#'])
+
+        >>> am = abcFormat.ABCMetadata('K:HP')
+        >>> am.getKeySignatureParameters()
+        ('C', None, [])
+
+        >>> am = abcFormat.ABCMetadata('K:G ionian')
+        >>> am.getKeySignatureParameters()
+        ('G', 'ionian', [])
+
+        >>> am = abcFormat.ABCMetadata('K:G aeol')
+        >>> am.getKeySignatureParameters()
+        ('G', 'aeolian', [])
+
+        >>> am = abcFormat.ABCMetadata('K:Cm ^f _d')
+        >>> am.getKeySignatureParameters()
+        ('C', 'minor', ['F#', 'D-'])
+
+        >>> am = abcFormat.ABCMetadata('K:G major =F')
+        >>> am.getKeySignatureParameters()
+        ('G', 'major', ['Fn'])
+        '''
+
+        # The key signature should be specified with a capital letter (A-G) which
+        # may be followed by a # or b for sharp or flat respectively.
+        # In addition the mode should be specified (when no mode is indicated, major
+        # is assumed).
+        # The spaces can be left out, capitalisation is ignored for the modes
+        # The key signatures may be modified by adding accidentals, according to the
+        # format: K:<tonic> <mode> <accidentals>.
+        RE_MATCH_MODE = re.compile(r'(?P<tonic>(H[pP])' +
+                                   r'|([A-G][#b]?)?)[ ]*(?P<mode>[a-zA-Z]*)([ ]*(?P<accidentals>.*))')
+
+        # It is possible to use the format  to explicitly
+        # format: K:<tonic> exp <accidentals>
+        RE_MATCH_EXP = re.compile(r'(?P<tonic>(H[pP])' +
+                                  r'|([A-G]?[#b]?))[ ]+exp[ ]+(?P<accidentals>.*)')
+
+        # abc uses b for flat and # for sharp in key tonic spec only
+        TonicNames = {'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'G#', 'A#', 'F',
+                      'Bb', 'Eb', 'D#', 'Ab', 'E#', 'Db', 'C#', 'Gb', 'Cb'}
+
+        # ABC accidentals mapped to m21 accidentals
+        accidentalMap = {'=': 'n', '_': '-', '__': '--', '^': '#', '^^': '##'}
+
+        modeMap = {'dor': 'dorian', 'phr': 'phrygian', 'lyd': 'lydian',
+                   'mix': 'mixolydian', 'maj': 'major', 'ion': 'ionian',
+                   'aeo': 'aeolian', 'loc': 'locrian', 'min': 'minor',
+                   'm': 'minor'}
+
+        keyStr = self.data.strip()
+        tonic = None
+        mode = None
+        match = RE_MATCH_EXP.match(keyStr)
+
+        if not match:
+            match = RE_MATCH_MODE.match(keyStr)
+            if match:
+                # Major is the default mode if mode is missing
+                # Only the first 3 letters of the mode are evaluated
+                m = match.groupdict()['mode'][:3].lower()
+                mode = 'major' if not m else modeMap.get(m, 'major')
+            else:
+                return (tonic, mode, [])
+
+        a = match.groupdict()['accidentals'].strip()
+        t = match.groupdict()['tonic']
+        accidentals = {}
+
+        if t == 'Hp':
+            # Scotish bagpipe tune
+            tonic = 'D'
+            mode = None
+            accidentals = {'F': '#', 'C': '#'}
+        elif t == 'HP':
+            tonic = 'C'
+            mode = None
+        elif t in TonicNames:
+            # replace abc flat(b) with m21 flat(-)
+            t = t.replace('b', '-')
+            tonic = t
+        else:
+            # without tonic no valid mode
+            mode = None
+
+        for accStr in a.split():
+            # last char is the note symbol
+            note, acc = accStr[-1].upper(), accStr[:-1]
+            # the leading chars are accidentals =,^,_
+            if acc in accidentalMap and note in 'ABCDEFG':
+                accidentals[note] = accidentalMap[acc]
+
+        return (tonic, mode, [f"{n}{a}" for n, a in accidentals.
 
     def getKeySignatureObject(self) -> 'music21.key.KeySignature':
         # noinspection SpellCheckingInspection,PyShadowingNames
