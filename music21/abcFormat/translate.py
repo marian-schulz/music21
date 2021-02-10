@@ -190,9 +190,9 @@ class ABCTokenTranslator(ABCTranslator):
 
 def abcToPart(handler: abcFormat.ABCProcessHandler, target: stream.Part):
     has_measures = handler.definesMeasures()
-    if has_measures:
-        translator = ABCTokenTranslator(handler=handler, parent=target)
-        translator.translate(target=target)
+    if not has_measures:
+        translator = ABCTokenTranslator(parent=target)
+        translator.translate(handler=handler,target=target)
         target.coreElementsChanged()
     else:
         translator = ABCTokenTranslator(parent=target)
