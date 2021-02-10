@@ -415,172 +415,7 @@ class ABCMetadata2(ABCToken):
         # remove comments
         self.data = parts[1].split('%', 1)[0].strip()
 
-    def isInstruction(self) -> bool:
-        return self.tag == 'I'
 
-    def isUserDefined(self) -> bool:
-        return self.tag == 'U'
-
-    def isDefaultNoteLength(self) -> bool:
-        '''
-        Returns True if the tag is "L", False otherwise.
-        '''
-        return self.tag == 'L'
-
-    def isReferenceNumber(self) -> bool:
-        '''
-        Returns True if the tag is "X", False otherwise.
-
-        >>> x = abcFormat.ABCMetadata('X:5')
-        >>> x.tag
-        'X'
-        >>> x.isReferenceNumber()
-        True
-        '''
-        if self.tag == 'X':
-            return True
-        return False
-
-    def isMeter(self) -> bool:
-        '''
-        Returns True if the tag is "M" for meter, False otherwise.
-        '''
-        if self.tag == 'M':
-            return True
-        return False
-
-    def isTitle(self) -> bool:
-        '''
-        Returns True if the tag is "T" for title, False otherwise.
-        '''
-        if self.tag == 'T':
-            return True
-        return False
-
-    def isComposer(self) -> bool:
-        '''
-        Returns True if the tag is "C" for composer, False otherwise.
-        '''
-        if self.tag == 'C':
-            return True
-        return False
-
-    def isOrigin(self) -> bool:
-        '''
-        Returns True if the tag is "O" for origin, False otherwise.
-        This value is set in the Metadata `localOfComposition` of field.
-        '''
-        if self.tag == 'O':
-            return True
-        return False
-
-    def isVoice(self) -> bool:
-        '''
-        Returns True if the tag is "V", False otherwise.
-        '''
-        if self.tag == 'V':
-            return True
-        return False
-
-    def isKey(self) -> bool:
-        '''
-        Returns True if the tag is "K", False otherwise.
-        Note that in some cases a Key will encode clef information.
-
-        (example from corpus: josquin/laDeplorationDeLaMorteDeJohannesOckeghem.abc)
-        '''
-        if self.tag == 'K':
-            return True
-        return False
-
-    def isTempo(self) -> bool:
-        '''
-        Returns True if the tag is "Q" for tempo, False otherwise.
-        '''
-        if self.tag == 'Q':
-            return True
-        return False
-
-    def getUserDefined(self) -> Tuple[str, Optional[List[ABCToken]]]:
-        symbol, definition = self.data.split('=')
-        definition = definition.strip()
-        if definition in ['!nil!', '!none!']:
-            tokens = None
-        else:
-            tokens = ABCHandler().tokenize(definition)
-        return symbol.strip(), tokens
-
-    def getTimeSignatureParameters(self):
-        '''
-        If there is a time signature representation available,
-        get a numerator, denominator and an abbreviation symbol.
-        To get a music21 :class:`~music21.meter.TimeSignature` object, use
-        the :meth:`~music21.abcFormat.ABCMetadata.getTimeSignatureObject` method.
-
-        >>> am = abcFormat.ABCMetadata('M:2/2')
-        >>> am.isMeter()
-        True
-        >>> am.getTimeSignatureParameters()
-        (2, 2, 'normal')
-
-        >>> am = abcFormat.ABCMetadata('M:C|')
-        >>> am.getTimeSignatureParameters()
-        (2, 2, 'cut')
-
-        >>> am = abcFormat.ABCMetadata('M: none')
-        >>> am.getTimeSignatureParameters() is None
-        True
-
-        >>> am = abcFormat.ABCMetadata('M: FREI4/4')
-        >>> am.getTimeSignatureParameters()
-        (4, 4, 'normal')
-        '''
-        if not self.isMeter():
-            raise ABCTokenException('no time signature associated with this metadata')
-
-        if self.data.lower() == 'none':
-            return None
-        elif self.data == 'C':
-            n, d = 4, 4
-            symbol = 'common'  # m21 compat
-        elif self.data == 'C|':
-            n, d = 2, 2
-            symbol = 'cut'  # m21 compat
-        else:
-            n, d = self.data.split('/')
-            # using get number from string to handle odd cases such as
-            # FREI4/4
-            n = int(common.getNumFromStr(n.strip())[0])
-            d = int(common.getNumFromStr(d.strip())[0])
-            symbol = 'normal'  # m21 compat
-        return n, d, symbol
-
-    def getTimeSignatureObject(self):
-        '''
-        Return a music21 :class:`~music21.meter.TimeSignature`
-        object for this metadata tag, if isMeter is True, otherwise raise exception.
-
-        >>> am = abcFormat.ABCMetadata('M:2/2')
-        >>> ts = am.getTimeSignatureObject()
-        >>> ts
-        <music21.meter.TimeSignature 2/2>
-
-        >>> am = abcFormat.ABCMetadata('Q:40')
-        >>> am.getTimeSignatureObject()
-        Traceback (most recent call last):
-        music21.abcFormat.ABCTokenException: no time signature associated with
-            this non-metrical metadata.
-        '''
-        if not self.isMeter():
-            raise ABCTokenException(
-                'no time signature associated with this non-metrical metadata.')
-        from music21 import meter
-        parameters = self.getTimeSignatureParameters()
-        if parameters is None:
-            return None
-        else:
-            numerator, denominator, unused_symbol = parameters
-            return meter.TimeSignature(f'{numerator}/{denominator}')
 
     def getKeySignatureParameters(self):
         # noinspection SpellCheckingInspection
@@ -945,29 +780,6 @@ class ABCMetadata2(ABCToken):
             raise ABCTokenException(
                 f'no quarter length associated with this metadata: {self.data}')
 
-    def getInstruction(self) -> Optional[Tuple[str, str]]:
-        """ Get an instruction field.
-        >>> abcFormat.ABCMetadata('I:midi instrument=16').getInstruction()
-        ('MIDI', 'instrument=16')
-        """
-        if not self.isInstruction():
-            raise ABCTokenException('no instruction associated with this metadata')
-
-        parts = self.data.split(' ', 1)
-        key = parts[0].strip().upper()
-        try:
-            data = parts[1].strip()
-            return key, data
-        except IndexError:
-            return key, ''
-
-
-class ABCInlineMetadata(ABCMetadata):
-    TOKEN_REGEX = r'[\[][IKLMmNPQRrUV][:][^\]]*[\]]'
-
-    def __init__(self, src: str):
-        super().__init__(src[1:-1])
-
 from music21 import clef
 
 CLEF_RE =  r'(?P<name>clef\s*=\s*\S+(?!\S))'
@@ -1068,7 +880,6 @@ class ABCMetadata(ABCToken):
         # remove comments
         self.data: str = parts[1].split('%', 1)[0].strip()
 
-
 VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*\S+)|(?P<subname>(subname|snm)\s*=\s*\S+)')
 class ABCVoice(ABCMetadata, ABCClefMixin):
     def __init__(self, data):
@@ -1102,127 +913,97 @@ class ABCVoice(ABCMetadata, ABCClefMixin):
                 self.subname = v.split('=')[1].strip().strip('"')
 
 
-class ABCKey(ABCMetadata, ABCClefMixin):
-    def __init__(self, src: str):
-        r"""
-        This is the Token for the ABC filed 'K:'
-        The ABCKey specified a Key or KeySignature.
-        However, it can also specify a clef in addition.
-        The clef follows after the key and key modifications
+class ABCUserDefined(ABCMetadata):
+    r"""
+    This is the Token for the ABC filed 'U:'
+    The token creates ABCTokens for a userdefined symbol
 
-        >>> k = abcFormat.ABCVoice("K:Cm")
-        >>> k.getKeySignatureObject()
+    >>> v = abcFormat.ABCUserDefined('U:m=.u')
+    >>> v.symbol
+    'm'
+    >>> v.definition
+    '.u'
+    """
+    def __init__(self, src):
+        super().__init__(src)
 
-        We got also clef informations from a key field
-        >>> v = abcFormat.ABCVoice("K:C treble")
-        >>> v.clef
-        'treble'
+        parts = self.data.split('=', 1)
+        self.symbol = parts[0].strip()
+        self.definition = parts[1].strip()
+
+    def tokenize(self, parent: 'ABCHandler') -> List[ABCToken]:
         """
+        >>> abcFormat.ABCUserDefined('U:m=.u').tokenize()
+        """
+        if self.definition in ['!nil!', '!none!']:
+            return None
+        else:
+            return ABCHandler(abcVersion=parent.abcVersion).tokenize(self.definition)
 
+
+class ABCKey(ABCMetadata, ABCClefMixin):
+    r"""
+    This is the Token for the ABC filed 'K:'
+    The ABCKey specified a Key or KeySignature.
+    All values were translated into m21 compatible notation.
+    The key signature should be specified with a capital letter (A-G) which
+    may be followed by a # or b for sharp or flat respectively.
+    In addition the mode should be specified (when no mode but a tonic is indicated,
+    major is assumed).
+
+    The spaces can be left out, capitalisation is ignored for the modes
+    The key signatures may be modified by adding accidentals, according to the
+    format: K:<tonic> <mode> <accidentals>.
+
+    However, it can also specify a clef in addition.
+    The clef follows after the key and key modifications
+
+    >>> am = abcFormat.ABCKey('')
+    >>> am.getKeySignatureParameters()
+    >>> self.tonic
+    None
+    >>> self.mode
+    None
+    >>> self.altered_pitches
+    []
+
+    >>> am = abcFormat.ABCKey('Eb Lydian')
+    >>> self.tonic
+    'E-'
+    >>> self.mode
+    'Lydian'
+
+    >>> am = abcFormat.ABCKey('C ^d')
+    >>> self.tonic
+    'C'
+    >>> self.mode
+    'major'
+    >>> self.altered_pitches
+    ['D#']
+
+    We got also clef informations from a key field
+    >>> v = abcFormat.ABCVoice("K:C treble")
+    >>> v.clef
+    'treble'
+    """
+
+    def __init__(self, src: str):
         super().__init__(src)
         ABCClefMixin.__init__(self, self.data)
 
-        self.tonic: str = None
-        self.mode: str = None
-        self.accidental_modifications: List[str]
+        self.tonic: Optional[str] = None
+        self.mode: Optional[str] = None
+        self.alteredPitches: List[str] = []
+        self._setKeySignatureParameters()
 
-    def keyObject(self):
+    def _setKeySignatureParameters(self):
+        """
+        Set the ABCKey parameters:
+            self.tonic: Optional[str]
+            self.mode: Optional[str]
+            self.alteredPitches: List[str]
+        """
 
-
-    def _getKeySignatureParameters(self) -> Tuple[str, str, List[str]]:
-        # noinspection SpellCheckingInspection
-        '''
-        Extract key signature parameters, include indications for mode,
-        tonic and alterted pitches of the key signature.
-        All values were translated into m21 compatible notation.
-        return Tuple[<tonic: str>, <mode: str>, List[<altertedPitch: str>]]
-
-        >>> from music21 import abcFormat
-
-        >>> am = abcFormat.ABCMetadata('K:E exp ^c _a')
-        >>> am.getKeySignatureParameters()
-        ('E', None, ['C#', 'A-'])
-
-        >>> am = abcFormat.ABCMetadata('K:^c _c')
-        >>> am.getKeySignatureParameters()
-        (None, None, ['C-'])
-
-        >>> am = abcFormat.ABCMetadata('K:_c =c clef=alto')
-        >>> am.getKeySignatureParameters()
-        (None, None, ['Cn'])
-
-        >>> am = abcFormat.ABCMetadata('K:')
-        >>> am.getKeySignatureParameters()
-        (None, None, [])
-
-        >>> am = abcFormat.ABCMetadata('K: exp ^c ^f clef=alto')
-        >>> am.getKeySignatureParameters()
-        (None, None, ['C#', 'F#'])
-
-        >>> am = abcFormat.ABCMetadata('K:Eb Lydian')
-        >>> am.getKeySignatureParameters()
-        ('E-', 'lydian', [])
-
-        >>> am = abcFormat.ABCMetadata('K:C ^d')
-        >>> am.getKeySignatureParameters()
-        ('C', 'major', ['D#'])
-
-        >>> am = abcFormat.ABCMetadata('K:APhry clef=alto')
-        >>> am.getKeySignatureParameters()
-        ('A', 'phrygian', [])
-
-        >>> am = abcFormat.ABCMetadata('K:G Mixolydian')
-        >>> am.getKeySignatureParameters()
-        ('G', 'mixolydian', [])
-
-        >>> am = abcFormat.ABCMetadata('K: Edor')
-        >>> am.getKeySignatureParameters()
-        ('E', 'dorian', [])
-
-        >>> am = abcFormat.ABCMetadata('K: F')
-        >>> am.getKeySignatureParameters()
-        ('F', 'major', [])
-
-        >>> am = abcFormat.ABCMetadata('K:G')
-        >>> am.getKeySignatureParameters()
-        ('G', 'major', [])
-
-        >>> am = abcFormat.ABCMetadata('K:Gm')
-        >>> am.getKeySignatureParameters()
-        ('G', 'minor', [])
-
-        >>> am = abcFormat.ABCMetadata('K:Hp')
-        >>> am.getKeySignatureParameters()
-        ('D', None, ['F#', 'C#'])
-
-        >>> am = abcFormat.ABCMetadata('K:HP')
-        >>> am.getKeySignatureParameters()
-        ('C', None, [])
-
-        >>> am = abcFormat.ABCMetadata('K:G ionian')
-        >>> am.getKeySignatureParameters()
-        ('G', 'ionian', [])
-
-        >>> am = abcFormat.ABCMetadata('K:G aeol')
-        >>> am.getKeySignatureParameters()
-        ('G', 'aeolian', [])
-
-        >>> am = abcFormat.ABCMetadata('K:Cm ^f _d')
-        >>> am.getKeySignatureParameters()
-        ('C', 'minor', ['F#', 'D-'])
-
-        >>> am = abcFormat.ABCMetadata('K:G major =F')
-        >>> am.getKeySignatureParameters()
-        ('G', 'major', ['Fn'])
-        '''
-
-        # The key signature should be specified with a capital letter (A-G) which
-        # may be followed by a # or b for sharp or flat respectively.
-        # In addition the mode should be specified (when no mode is indicated, major
-        # is assumed).
-        # The spaces can be left out, capitalisation is ignored for the modes
-        # The key signatures may be modified by adding accidentals, according to the
-        # format: K:<tonic> <mode> <accidentals>.
         RE_MATCH_MODE = re.compile(r'(?P<tonic>(H[pP])' +
                                    r'|([A-G][#b]?)?)[ ]*(?P<mode>[a-zA-Z]*)([ ]*(?P<accidentals>.*))')
 
@@ -1243,20 +1024,17 @@ class ABCKey(ABCMetadata, ABCClefMixin):
                    'aeo': 'aeolian', 'loc': 'locrian', 'min': 'minor',
                    'm': 'minor'}
 
-        keyStr = self.data.strip()
-        tonic = None
-        mode = None
-        match = RE_MATCH_EXP.match(keyStr)
+        match = RE_MATCH_EXP.match(self.data)
 
         if not match:
-            match = RE_MATCH_MODE.match(keyStr)
+            match = RE_MATCH_MODE.match(self.data)
             if match:
                 # Major is the default mode if mode is missing
                 # Only the first 3 letters of the mode are evaluated
                 m = match.groupdict()['mode'][:3].lower()
-                mode = 'major' if not m else modeMap.get(m, 'major')
+                self.mode = 'major' if not m else modeMap.get(m, 'major')
             else:
-                return (tonic, mode, [])
+                return
 
         a = match.groupdict()['accidentals'].strip()
         t = match.groupdict()['tonic']
@@ -1264,19 +1042,18 @@ class ABCKey(ABCMetadata, ABCClefMixin):
 
         if t == 'Hp':
             # Scotish bagpipe tune
-            tonic = 'D'
-            mode = None
+            self.tonic = 'D'
+            self.mode = None
             accidentals = {'F': '#', 'C': '#'}
         elif t == 'HP':
-            tonic = 'C'
-            mode = None
+            self.tonic = 'C'
+            self.mode = None
         elif t in TonicNames:
             # replace abc flat(b) with m21 flat(-)
-            t = t.replace('b', '-')
-            tonic = t
+            self.tonic = t.replace('b', '-')
         else:
             # without tonic no valid mode
-            mode = None
+            self.mode = None
 
         for accStr in a.split():
             # last char is the note symbol
@@ -1285,83 +1062,75 @@ class ABCKey(ABCMetadata, ABCClefMixin):
             if acc in accidentalMap and note in 'ABCDEFG':
                 accidentals[note] = accidentalMap[acc]
 
-        return (tonic, mode, [f"{n}{a}" for n, a in accidentals.
+        self.alteredPitches = [f"{n}{a}" for n, a in accidentals.items()]
+
 
     def getKeySignatureObject(self) -> 'music21.key.KeySignature':
         # noinspection SpellCheckingInspection,PyShadowingNames
         '''
         Return a music21 :class:`~music21.key.KeySignature` or :class:`~music21.key.Key`
         object for this metadata tag.
-        >>> am = abcFormat.ABCMetadata('K:G =F')
+        >>> am = abcFormat.ABCKey('K:G =F')
         >>> am.getKeySignatureObject()
         <music21.key.Key of G major>
 
-        >>> am = abcFormat.ABCMetadata('K:G ^d')
-        >>> ks = am.getKeySignatureObject()
-        >>> ks
+        >>> am = abcFormat.ABCKey('K:G ^d')
+        >>> am.getKeySignatureObject()
         <music21.key.KeySignature of pitches: [F#, D#]>
 
-        >>> am = abcFormat.ABCMetadata('K:G')
-        >>> ks = am.getKeySignatureObject()
-        >>> ks
+        >>> am = abcFormat.ABCKey('K:G')
+        >>> am.getKeySignatureObject()
         <music21.key.Key of G major>
 
-        >>> am = abcFormat.ABCMetadata('K:Gmin')
-        >>> ks = am.getKeySignatureObject()
-        >>> ks
+        >>> am = abcFormat.ABCKey('K:Gmin')
+        >>> am.getKeySignatureObject()
         <music21.key.Key of g minor>
 
-        >>> am = abcFormat.ABCMetadata('K:E exp ^c ^a')
-        >>> ks = am.getKeySignatureObject()
-        >>> ks
+        >>> am = abcFormat.ABCKey('K:E exp ^c ^a')
+        >>> am.getKeySignatureObject()
         <music21.key.KeySignature of pitches: [C#, A#]>
 
-        >>> am = abcFormat.ABCMetadata('K:GM')
-        >>> ks = am.getKeySignatureObject()
-        >>> ks
+        >>> am = abcFormat.ABCKey('K:GM')
+        >>> am.getKeySignatureObject()
         <music21.key.Key of g minor>
 
-        >>> am = abcFormat.ABCMetadata('K:Hp')
+        >>> am = abcFormat.ABCKey('K:Hp')
         >>> am.getKeySignatureObject()
         <music21.key.KeySignature of pitches: [F#, C#]>
 
-        >>> am = abcFormat.ABCMetadata('K:HP')
+        >>> am = abcFormat.ABCKey('K:HP')
         >>> am.getKeySignatureObject()
         <music21.key.KeySignature of no sharps or flats>
 
-        >>> am = abcFormat.ABCMetadata('K:C =c')
+        >>> am = abcFormat.ABCKey('K:C =c')
         >>> am.getKeySignatureObject()
         <music21.key.Key of C major>
 
-        >>> am = abcFormat.ABCMetadata('K:C ^c =c')
+        >>> am = abcFormat.ABCKey('K:C ^c =c')
         >>> am.getKeySignatureObject()
         <music21.key.Key of C major>
 
-        >>> am = abcFormat.ABCMetadata('K:C ^c _c')
+        >>> am = abcFormat.ABCKey('K:C ^c _c')
         >>> am.getKeySignatureObject()
         <music21.key.KeySignature of pitches: [C-]>
 
-        >>> am = abcFormat.ABCMetadata('K:^c _c')
+        >>> am = abcFormat.ABCKey('K:^c _c')
         >>> am.getKeySignatureObject()
         <music21.key.KeySignature of pitches: [C-]>
 
-        >>> am = abcFormat.ABCMetadata('K:Db')
+        >>> am = abcFormat.ABCKey('K:Db')
         >>> am.getKeySignatureObject()
         <music21.key.Key of D- major>
         '''
-        if not self.isKey():
-            raise ABCTokenException('no key signature associated with this metadata')
-
         from music21 import key
-        tonic, mode, accidentals = self.getKeySignatureParameters()
 
-        if mode and tonic:
-            ks: key.KeySignature = key.Key(tonic, mode)
-            if accidentals:
+        if self.mode and self.tonic:
+            ks: key.KeySignature = key.Key(self.tonic, self.mode)
+            if self.alteredPitches:
                 # Apply the additional altered pitches on the given altered pitches of the key
                 # keyAltPitch = [ p.name[0]: p.name[1:] for p in ks.alteredPitches ]
                 newAltPitch = {p.name[0]: p.name[1:] for p in ks.alteredPitches}
-                for a in accidentals:
+                for a in self.alteredPitches:
                     note, acc = a[0], a[1:]
                     if acc == 'n':
                         # a natural removes a previous setted alteration
@@ -1377,23 +1146,52 @@ class ABCKey(ABCMetadata, ABCClefMixin):
                     ks = key.KeySignature()
                     ks.alteredPitches = [f"{n}{a}" for n, a in newAltPitch.items()]
 
-        elif accidentals:
+        elif self.alteredPitches:
             # Create a Keysignature from accidentals
             ks = key.KeySignature()
-            ks.alteredPitches = accidentals
+            ks.alteredPitches = self.alteredPitches
         else:
             # With nothing is given we get a Keysignature without any altered pitches
             ks = key.KeySignature(0)
 
         return ks
 
-        # [clef=]<clef name>[<line number>][+8 | -8] [middle=<pitch>] [transpose=<semitones>] [octave=<number>] [stafflines=<lines>]"
+
+class ABCInstruction(ABCMetadata):
+    r"""
+    ABCInstruction token for the ABC field 'I:'
+
+    The token represent an instruction or abc directive
+
+    >>> i = abcFormat.ABCInstruction('I: accidental-propagation pitch')
+    >>> i.key
+    'accidental-propagation'
+    >>> i.data
+    'pitch'
+    """
+
+    def __init__(self, src):
+        super().__init__(src)
+        parts = self.data.split(' ', 1)
+        self.key = parts[0].strip()
+        self.data = parts[1].strip()
+
+
+class ABCMeter(ABCMetadata):
+    '''
+    If there is a time signature representation available,
+    get a numerator, denominator and an abbreviation symbol.
+    To get a music21 :class:`~music21.meter.TimeSignature` object, use
+    the :meth:`~music21.abcFormat.ABCMetadata.getTimeSignatureObject` method.
+    '''
+
+    def __init__(self, src):
+        super().__init__(src)
+
 
 RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
 
-
 class ABCLyrics(ABCToken):
-
     TOKEN_REGEX = r'w:.*((([\][\n]w)|([\n][+])):.*)*'
     def __init__(self, src: str):
         r'''
@@ -1431,7 +1229,7 @@ class ABCDirective(ABCToken):
     TOKEN_REGEX = '%%.*'
 
     def __new__(cls, src: str):
-        return ABCMetadata(f'I:{src}')
+        return ABCInstruction(f'I:{src}')
 
 
 class ABCSymbol(ABCToken):
