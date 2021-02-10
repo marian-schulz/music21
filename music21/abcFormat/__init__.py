@@ -70,6 +70,7 @@ from music21 import articulations
 from music21 import expressions
 from music21 import dynamics
 from music21 import repeat
+from music21 import meter
 
 from music21.abcFormat import translate
 from music21.abcFormat import testFiles
@@ -182,6 +183,7 @@ class ABCToken(prebase.ProtoM21Object):
 
     def m21Object(self):
         return None
+
 
 class ABCMark(ABCToken):
     '''
@@ -330,7 +332,6 @@ M21_DECORATIONS = {
     # '^':                    marcato (inverted V)
 }
 
-
 class ABCDecoration(ABCToken):
     """
     ABCDecoration is a factory class for ABCArticulation & ABCExpression
@@ -376,282 +377,227 @@ class ABCDecoration(ABCToken):
                 return ABCDynamic(src)
             raise ABCTokenException(f'Unknown abc decoration "{src}"')
 
-class ABCMetadata2(ABCToken):
-    r'''
-    Defines a token of metadata in ABC.
 
-    >>> md = abcFormat.ABCMetadata('I:linebreak')
-    >>> md.src
-    'I:linebreak'
+from music21 import clef
 
-    Has two attributes, `tag` and `data` which are strings
+CLEF_RE =  r'(?P<name>clef\s*=\s*\S+(?!\S))'
+CLEF_RE += r'|(?P<octave>octave=.*(?!\S))'
+CLEF_RE += r'|(?P<transpose>t(ranspose)?\s*=\s*[+\-]?[0-9]+(?!\S))'
+CLEF_RE += r'|(?P<unamed>[^=]+?(?!\S))'
+CLEF_RE = re.compile(CLEF_RE, re.MULTILINE)
 
-    >>> md.tag
-    'I'
-    >>> md.data
-    'linebreak'
-    '''
-    TOKEN_REGEX = r'^[A-Za-vxz]:.*$'
+class ABCMetadata(ABCToken):
 
-    # given a logical unit, create an object
-    # may be a chord, notes, metadata, bars
+    TOKEN_REGEX = r'^[ABCDFGHmNOPRrSsTWZ]:.*$|\[[mnPRr]:[^\]\n%]*\]'
 
-    def __init__(self, src=''):
-        '''
-        Called before contextual adjustments and needs
-        to have access to data.  Divides a token into
-        tag (a single capital letter or w) and .data representations.
-
-        >>> x = abcFormat.ABCMetadata('T:tagData')
-        >>> x.tag
-        'T'
-        >>> x.data
-        'tagData'
-        '''
+    def __init__(self, src):
         super().__init__(src)
-        parts = src.split(':', 1)
-        self.data: Optional[str] = None
-        self.tag: str = parts[0].strip()
-        # remove comments
-        self.data = parts[1].split('%', 1)[0].strip()
-
-
-
-    def getKeySignatureParameters(self):
-        # noinspection SpellCheckingInspection
-        '''
-        Extract key signature parameters, include indications for mode,
-        and translate sharps count compatible with m21,
-        returning the number of sharps and the mode.
-
-        >>> from music21 import abcFormat
-
-        >>> am = abcFormat.ABCMetadata('K:Eb Lydian')
-        >>> am.getKeySignatureParameters()
-        (-2, 'lydian')
-
-        >>> am = abcFormat.ABCMetadata('K:APhry')
-        >>> am.getKeySignatureParameters()
-        (-1, 'phrygian')
-
-        >>> am = abcFormat.ABCMetadata('K:G Mixolydian')
-        >>> am.getKeySignatureParameters()
-        (0, 'mixolydian')
-
-        >>> am = abcFormat.ABCMetadata('K: Edor')
-        >>> am.getKeySignatureParameters()
-        (2, 'dorian')
-
-        >>> am = abcFormat.ABCMetadata('K: F')
-        >>> am.getKeySignatureParameters()
-        (-1, 'major')
-
-        >>> am = abcFormat.ABCMetadata('K:G')
-        >>> am.getKeySignatureParameters()
-        (1, 'major')
-
-        >>> am = abcFormat.ABCMetadata('K:Gm')
-        >>> am.getKeySignatureParameters()
-        (-2, 'minor')
-
-        >>> am = abcFormat.ABCMetadata('K:Hp')
-        >>> am.getKeySignatureParameters()
-        (2, None)
-
-        >>> am = abcFormat.ABCMetadata('K:G ionian')
-        >>> am.getKeySignatureParameters()
-        (1, 'ionian')
-
-        >>> am = abcFormat.ABCMetadata('K:G aeol')
-        >>> am.getKeySignatureParameters()
-        (-2, 'aeolian')
-
-        '''
-        # placing this import in method for now; key.py may import this module
-        from music21 import key
-
-        if not self.isKey():
-            raise ABCTokenException('no key signature associated with this metadata.')
-
-        # abc uses b for flat in key spec only
-        keyNameMatch = ['c', 'g', 'd', 'a', 'e', 'b', 'f#', 'g#', 'a#',
-                        'f', 'bb', 'eb', 'd#', 'ab', 'e#', 'db', 'c#', 'gb', 'cb',
-                        # HP or Hp are used for highland pipes
-                        'hp']
-
-        # if no match, provide defaults,
-        # this is probably an error or badly formatted
-        standardKeyStr = 'C'
-        stringRemain = ''
-        # first, get standard key indication
-        for target in sorted(keyNameMatch, key=len, reverse=True):
-            if target == self.data[:len(target)].lower():
-                # keep case
-                standardKeyStr = self.data[:len(target)]
-                stringRemain = self.data[len(target):]
-                break
-
-        if len(standardKeyStr) > 1 and standardKeyStr[1] == 'b':
-            standardKeyStr = standardKeyStr[0] + '-'
-
-        mode = None
-        stringRemain = stringRemain.strip()
-        if stringRemain == '':
-            # Assume mode is major by default
-            mode = 'major'
+        if src.startswith('['):
+            self.inlined = True
+            src = src[1:-1]
         else:
-            # only first three characters are parsed
-            modeCandidate = stringRemain.lower()
-            for match, modeStr in (
-                ('dor', 'dorian'),
-                ('phr', 'phrygian'),
-                ('lyd', 'lydian'),
-                ('mix', 'mixolydian'),
-                ('maj', 'major'),
-                ('ion', 'ionian'),
-                ('aeo', 'aeolian'),
-                ('m', 'minor'),
-            ):
-                if modeCandidate.startswith(match):
-                    mode = modeStr
+            self.inlined = False
+
+        src = src.split(':', 1)
+        self.tag: str = src[0].strip()
+        # remove comments
+        self.data: str = src[1].split('%', 1)[0].strip()
+
+
+class ABCReferenceNumber(ABCMetadata):
+    TOKEN_REGEX = r'^X:.*$'
+
+
+class ABCUnitNoteLength(ABCMetadata):
+    r"""
+    ABCUnitNoteLength represent the ABC filed L:
+
+    >>> x = 'X:1\nL:1/4\nM:3/4\n\nf'
+    >>> sc = converter.parse(x, format='abc')
+    >>> sc.flat.notes[0].duration.type
+    'quarter'
+
+    >>> am = abcFormat.ABCMetadata('L:1/2')
+    >>> am.getDefaultQuarterLength()
+    2.0
+
+    >>> am = abcFormat.ABCMetadata('L:1/8')
+    >>> am.getDefaultQuarterLength()
+    0.5
+
+    >>> am = abcFormat.ABCMetadata('M:C|')
+    >>> am.getDefaultQuarterLength()
+    0.5
+    """
+    def __init__(self, src):
+        super().__init__(src)
+        if '/' in self.data:
+            # should be in L:1/4 form
+            n, d = self.data.split('/',1)
+            n = int(n.strip())
+            # the notation L: 1/G is found in some essen files
+            # this is extremely uncommon and might be an error
+            if d == 'G':
+                d = 4  # assume a default
+            else:
+                d = int(d.strip())
+            # 1/4 is 1, 1/8 is 0.5
+            self.DefaultQuarterLength = n * 4 / d
+        else:
+            raise ABCTokenException(f'Invalid form of the unit not length "{self.src}"')
+
+
+class ABCClef(ABCMetadata):
+    """
+    The clefs with the +/-8 at then end transpose the melody an octave
+    up or down if no octave modifier has explicitly set.
+    When specifying the name, the 'clef=' can also be omitted
+
+    >>> md = abcFormat.ABCClef('clef=treble')
+    >>> md.name
+    'treble'
+
+    >>> md = abcFormat.ABCClef('bass-8')
+    >>> md.clef
+    <music21.clef.Bass8vbClef>
+    >>> md.octave
+    -1
+
+    >>> md = abcFormat.ABCClef('clef="treble+8"')
+    >>> md.clef
+    <music21.clef.Treble8vaClef>
+    >>> md.octave
+    1
+
+    >>> md = abcFormat.ABCClef('clef=treble+8 octave=-2')
+    >>> md.clef
+    <music21.clef.Treble8vaClef>
+    >>> md.octave
+    -2
+    """
+
+    CLEF_NAMES = {
+        'G1': clef.FrenchViolinClef,
+        'treble': clef.TrebleClef, 'g2': clef.TrebleClef,
+        'treble-8': clef.Treble8vbClef, 'treble+8': clef.Treble8vaClef,
+        'bass3': clef.CBaritoneClef, 'baritone': clef.CBaritoneClef,
+        'f3': clef.CBaritoneClef, 'bass': clef.BassClef,
+        'f4': clef.BassClef, 'bass-8': clef.Bass8vbClef,
+        'bass+8': clef.Bass8vaClef, 'f5': clef.SubBassClef,
+        'tenor': clef.TenorClef, 'c4': clef.TenorClef,
+        'alto': clef.AltoClef, 'c3': clef.AltoClef,
+        'alto1': clef.SopranoClef, 'soprano': clef.SopranoClef,
+        'c1': clef.SopranoClef, 'alto2': clef.MezzoSopranoClef,
+        'mezzosoprano': clef.MezzoSopranoClef, 'c2': clef.MezzoSopranoClef
+    }
+
+    def __init__(self, src: str):
+        super().__init__(src)
+        self.transpose = 0
+        self.name = None
+        self.octave = None
+        self.clef = None
+
+        # list of unamed matches
+        unamed  = []
+        for m in CLEF_RE.finditer(self.data):
+            k = m.lastgroup
+            v = m.group()
+            if k in ['transpose', 'octave', 'name']:
+                setattr(self, k, v.split('=')[1].strip().strip('"'))
+            else:
+                unamed.append(v.strip())
+
+        # the clef name is allowed without clef=<name>
+        if self.name is None:
+            for tag in unamed:
+                if tag in ABCClef.CLEF_NAMES:
+                    self.name = tag
                     break
 
-        # Special case for highland pipes
-        # replace a flat symbol if found; only the second char
-        if standardKeyStr == 'HP':
-            standardKeyStr = 'C'  # no sharp or flats
-            mode = None
-        elif standardKeyStr == 'Hp':
-            standardKeyStr = 'D'  # use F#, C#, Gn
-            mode = None
+        if self.name:
+            self.clef = ABCClef.CLEF_NAMES[self.name]()
 
-        # not yet implemented: checking for additional chromatic alternations
-        # e.g.: K:D =c would write the key signature as two sharps
-        # (key of D) but then mark every  c  as  natural
-        return key.pitchToSharps(standardKeyStr, mode), mode
-
-    def getKeySignatureObject(self):
-        # noinspection SpellCheckingInspection,PyShadowingNames
-        '''
-        Return a music21 :class:`~music21.key.KeySignature` or :class:`~music21.key.Key`
-        object for this metadata tag.
-
-
-        >>> am = abcFormat.ABCMetadata('K:G')
-        >>> ks = am.getKeySignatureObject()
-        >>> ks
-        <music21.key.Key of G major>
-
-        >>> am = abcFormat.ABCMetadata('K:Gmin')
-        >>> ks = am.getKeySignatureObject()
-        >>> ks
-        <music21.key.Key of g minor>
-        >>> ks.sharps
-        -2
-
-        Note that capitalization does not matter
-        (http://abcnotation.com/wiki/abc:standard:v2.1#kkey)
-        so this should still be minor.
-
-        >>> am = abcFormat.ABCMetadata('K:GM')
-        >>> ks = am.getKeySignatureObject()
-        >>> ks
-        <music21.key.Key of g minor>
-        '''
-        if not self.isKey():
-            raise ABCTokenException('no key signature associated with this metadata')
-        from music21 import key
-        # return values of getKeySignatureParameters are sharps, mode
-        # need to unpack list w/ *
-        sharps, mode = self.getKeySignatureParameters()
-        ks = key.KeySignature(sharps)
-        if mode in (None, ''):
-            return ks
+        if self.octave is None:
+            self.octave = self.clef.octaveChange if self.clef else 0
         else:
-            return ks.asKey(mode)
+            self.octave = int(self.octave)
 
-    def getClefObject(self) -> Tuple[Optional['music21.clef.Clef'], Optional[int]]:
-        '''
-        Extract any clef parameters stored in the key metadata token.
-        Assume that a clef definition suggests a transposition.
-        Return both the Clef and the transposition.
+        # currenty unused
+        self.transpose = int(self.transpose)
 
-        Returns a two-element tuple of clefObj and transposition in semitones
 
-        >>> am = abcFormat.ABCMetadata('K:Eb Lydian bass')
-        >>> am.getClefObject()
-        (<music21.clef.BassClef>, -24)
-        '''
-        if self.isKey():
+VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*\S+)|(?P<subname>(subname|snm)\s*=\s*\S+)')
+class ABCVoice(ABCClef):
 
-            # placing this import in method for now; key.py may import this module
-            clefObj = None
-            t = None
+    TOKEN_REGEX = r'^V:.*$|\[V:[^\]\n%]*\]'
 
-            from music21 import clef
-            if '-8va' in self.data.lower():
-                clefObj = clef.Treble8vbClef()
-                t = -12
-            elif 'bass' in self.data.lower():
-                clefObj = clef.BassClef()
-                t = -24
+    def __init__(self, src):
+        r"""
+        >>> v = abcFormat.ABCVoice('V:1 nm="piano" subname=accompaniment')
+        >>> v.id
+        '1'
+        >>> v.name
+        'piano'
+        >>> v.subname
+        'accompaniment'
 
-            # if not defined, returns None, None
-            return clefObj, t
+        We got also clef informations from a voice field
+        >>> v = abcFormat.ABCVoice("V:1 treble")
+        >>> v.clef
+        'treble'
+        """
+        super().__init__(src)
+        self.id : str = ''
+        self.name : Optional[str] = None
+        self.subname: Optional[str] = None
+        for m in VOICE_RE.finditer(self.data):
+            k = m.lastgroup
+            v = m.group()
+            if k == 'id':
+                self.id = v
+            elif k == 'name':
+                self.name = v.split('=')[1].strip().strip('"')
+            elif k == 'subname':
+                self.subname = v.split('=')[1].strip().strip('"')
 
-        elif self.isVoice():
-            voicedata = self.getVoiceData()
 
-            # placing this import in method for now; key.py may import this module
-            clefObj = None
-            t = None
+class ABCTempo(ABCMetadata):
+    """
+    >>> am = abcFormat.ABCMetadata('Q: "Allegro" 1/4=120')
+    >>> am.getMetronomeMarkObject()
+    <music21.tempo.MetronomeMark Allegro Quarter=120.0>
+    """
+    TOKEN_REGEX = r'^Q:.*$|\[Q:[^\]\n%]*\]'
 
-            from music21 import clef
-
-            try:
-                clefstr = voicedata['clef'].lower()
-                if 'treble-8' == clefstr:
-                    clefObj = clef.Treble8vbClef()
-                    t = -12
-                elif 'bass' == clefstr:
-                    clefObj = clef.BassClef()
-                    t = -24
-            except KeyError:
-                pass
-            # if not defined, returns None, None
-            return clefObj, t
-
-        else:
-            raise ABCTokenException(
-                'no key signature associated with this metadata; needed for getting Clef Object')
+    def __init__(self, src):
+        super().__init__(src)
 
     def getMetronomeMarkObject(self) -> Optional['music21.tempo.MetronomeMark']:
         '''
         Extract any tempo parameters stored in a tempo metadata token.
 
-        >>> am = abcFormat.ABCMetadata('Q: "Allegro" 1/4=120')
+        >>> am = abcFormat.ABCTempo('Q: "Allegro" 1/4=120')
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark Allegro Quarter=120.0>
 
-        >>> am = abcFormat.ABCMetadata('Q: 3/8=50 "Slowly"')
+        >>> am = abcFormat.ABCTempo('Q: 3/8=50 "Slowly"')
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark Slowly Dotted Quarter=50.0>
 
-        >>> am = abcFormat.ABCMetadata('Q:1/2=120')
+        >>> am = abcFormat.ABCTempo('Q:1/2=120')
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark animato Half=120.0>
 
-        >>> am = abcFormat.ABCMetadata('Q:1/4 3/8 1/4 3/8=40')
+        >>> am = abcFormat.ABCTempo('Q:1/4 3/8 1/4 3/8=40')
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark grave Whole tied to Quarter (5 total QL)=40.0>
 
-        >>> am = abcFormat.ABCMetadata('Q:90')
+        >>> am = abcFormat.ABCTempo('Q:90')
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark maestoso Quarter=90.0>
 
         '''
-        if not self.isTempo():
-            raise ABCTokenException('no tempo associated with this metadata')
         mmObj = None
         from music21 import tempo
         # see if there is a text expression in quotes
@@ -704,214 +650,6 @@ class ABCMetadata2(ABCToken):
         mmObj.style.fontStyle = 'italic'
         return mmObj
 
-    def getDefaultQuarterLength(self) -> float:
-        r'''
-        If there is a quarter length representation available, return it as a floating point value
-
-        Meter is only used for default length if there is no L:
-
-        >>> x = 'X:1\nL:1/4\nM:3/4\n\nf'
-        >>> sc = converter.parse(x, format='abc')
-        >>> sc.flat.notes[0].duration.type
-        'quarter'
-
-        >>> am = abcFormat.ABCMetadata('L:1/2')
-        >>> am.getDefaultQuarterLength()
-        2.0
-
-        >>> am = abcFormat.ABCMetadata('L:1/8')
-        >>> am.getDefaultQuarterLength()
-        0.5
-
-        >>> am = abcFormat.ABCMetadata('M:C|')
-        >>> am.getDefaultQuarterLength()
-        0.5
-
-
-        If taking from meter, find the "fraction" and if < 0.75 use sixteenth notes.
-        If >= 0.75 use eighth notes.
-
-        >>> am = abcFormat.ABCMetadata('M:2/4')
-        >>> am.getDefaultQuarterLength()
-        0.25
-
-        >>> am = abcFormat.ABCMetadata('M:3/4')
-        >>> am.getDefaultQuarterLength()
-        0.5
-
-
-        >>> am = abcFormat.ABCMetadata('M:6/8')
-        >>> am.getDefaultQuarterLength()
-        0.5
-
-
-        Meter is only used for default length if there is no L:
-
-        >>> x = 'L:1/4\nM:3/4\n\nf'
-        >>> sc = converter.parse(x, format='abc')
-        >>> sc.flat.notes[0].duration.type
-        'quarter'
-        '''
-        # environLocal.printDebug(['getDefaultQuarterLength', self.data])
-        if self.isDefaultNoteLength() and '/' in self.data:
-            # should be in L:1/4 form
-            n, d = self.data.split('/')
-            n = int(n.strip())
-            # the notation L: 1/G is found in some essen files
-            # this is extremely uncommon and might be an error
-            if d == 'G':
-                d = 4  # assume a default
-            else:
-                d = int(d.strip())
-            # 1/4 is 1, 1/8 is 0.5
-            return n * 4 / d
-
-        elif self.isMeter():
-            # if meter auto-set a default not length
-            parameters = self.getTimeSignatureParameters()
-            if parameters is None:
-                return 0.5  # TODO: assume default, need to configure
-            n, d, unused_symbol = parameters
-            if n / d < 0.75:
-                return 0.25  # less than 0.75 the default is a sixteenth note
-            else:
-                return 0.5  # otherwise it is an eighth note
-        else:  # pragma: no cover
-            raise ABCTokenException(
-                f'no quarter length associated with this metadata: {self.data}')
-
-from music21 import clef
-
-CLEF_RE =  r'(?P<name>clef\s*=\s*\S+(?!\S))'
-CLEF_RE += r'|(?P<octave>octave=.*(?!\S))'
-CLEF_RE += r'|(?P<transpose>t(ranspose)?\s*=\s*[+\-]?[0-9]+(?!\S))'
-CLEF_RE += r'|(?P<unamed>[^=]+?(?!\S))'
-CLEF_RE = re.compile(CLEF_RE, re.MULTILINE)
-
-class ABCClefMixin():
-    """
-    The clefs with the +/-8 at then end transpose the melody an octave
-    up or down if no octave modifier has explicitly set.
-    When specifying the name, the 'clef=' can also be omitted
-
-    >>> md = abcFormat.ABCClefMixin('clef=treble')
-    >>> md.name
-    'treble'
-
-    >>> md = abcFormat.ABCClefMixin('bass-8')
-    >>> md.clef
-    <music21.clef.Bass8vbClef>
-    >>> md.octave
-    -1
-
-    >>> md = abcFormat.ABCClefMixin('clef="treble+8"')
-    >>> md.clef
-    <music21.clef.Treble8vaClef>
-    >>> md.octave
-    1
-
-    >>> md = abcFormat.ABCClefMixin('clef=treble+8 octave=-2')
-    >>> md.clef
-    <music21.clef.Treble8vaClef>
-    >>> md.octave
-    -2
-    """
-    CLEF_NAMES = {
-        'G1': clef.FrenchViolinClef,
-        'treble': clef.TrebleClef, 'g2': clef.TrebleClef,
-        'treble-8': clef.Treble8vbClef, 'treble+8': clef.Treble8vaClef,
-        'bass3': clef.CBaritoneClef, 'baritone': clef.CBaritoneClef,
-        'f3': clef.CBaritoneClef, 'bass': clef.BassClef,
-        'f4': clef.BassClef, 'bass-8': clef.Bass8vbClef,
-        'bass+8': clef.Bass8vaClef, 'f5': clef.SubBassClef,
-        'tenor': clef.TenorClef, 'c4': clef.TenorClef,
-        'alto': clef.AltoClef, 'c3': clef.AltoClef,
-        'alto1': clef.SopranoClef, 'soprano': clef.SopranoClef,
-        'c1': clef.SopranoClef, 'alto2': clef.MezzoSopranoClef,
-        'mezzosoprano': clef.MezzoSopranoClef, 'c2': clef.MezzoSopranoClef
-    }
-
-    def __init__(self, data: str):
-        self.transpose = 0
-        self.name = None
-        self.octave = None
-        self.clef = None
-
-        # list of unamed matches
-        unamed  = []
-        for m in CLEF_RE.finditer(data):
-            k = m.lastgroup
-            v = m.group()
-            if k in ['transpose', 'octave', 'name']:
-                setattr(self, k, v.split('=')[1].strip().strip('"'))
-            else:
-                unamed.append(v.strip())
-
-        # the clef name is allowed without clef=<name>
-        if self.name is None:
-            for tag in unamed:
-                if tag in ABCClefMixin.CLEF_NAMES:
-                    self.name = tag
-                    break
-
-        if self.name:
-            self.clef = ABCClefMixin.CLEF_NAMES[self.name]()
-
-        if self.octave is None:
-            self.octave = self.clef.octaveChange if self.clef else 0
-        else:
-            self.octave = int(self.octave)
-
-        # currenty unused
-        self.transpose = int(self.transpose)
-
-
-class ABCMetadata(ABCToken):
-    def __int__(self, src):
-        super().__init__(src)
-        if src.startswith('['):
-            self.inlined = True
-            src = src[1:-1]
-        else:
-            self.inlined = False
-
-        parts = src.split(':', 1)
-        self.tag: str = parts[0].strip()
-        # remove comments
-        self.data: str = parts[1].split('%', 1)[0].strip()
-
-VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*\S+)|(?P<subname>(subname|snm)\s*=\s*\S+)')
-class ABCVoice(ABCMetadata, ABCClefMixin):
-    def __init__(self, data):
-        r"""
-        >>> v = abcFormat.ABCVoice('V:1 nm="piano" subname=accompaniment')
-        >>> v.id
-        '1'
-        >>> v.name
-        'piano'
-        >>> v.subname
-        'accompaniment'
-
-        We got also clef informations from a voice field
-        >>> v = abcFormat.ABCVoice("V:1 treble")
-        >>> v.clef
-        'treble'
-        """
-        super().__init__(src)
-        ABCClefMixin.__init__(self, self.data)
-        self.id : str = ''
-        self.name : Optional[str] = None
-        self.subname: Optional[str] = None
-        for m in VOICE_RE.finditer(self.data):
-            k = m.lastgroup
-            v = m.group()
-            if k == 'id':
-                self.id = v
-            elif k == 'name':
-                self.name = v.split('=')[1].strip().strip('"')
-            elif k == 'subname':
-                self.subname = v.split('=')[1].strip().strip('"')
-
 
 class ABCUserDefined(ABCMetadata):
     r"""
@@ -924,6 +662,8 @@ class ABCUserDefined(ABCMetadata):
     >>> v.definition
     '.u'
     """
+    TOKEN_REGEX = r'^Q:.*$|\[Q:[^\]\n%]*\]'
+
     def __init__(self, src):
         super().__init__(src)
 
@@ -941,7 +681,7 @@ class ABCUserDefined(ABCMetadata):
             return ABCHandler(abcVersion=parent.abcVersion).tokenize(self.definition)
 
 
-class ABCKey(ABCMetadata, ABCClefMixin):
+class ABCKey(ABCClef):
     r"""
     This is the Token for the ABC filed 'K:'
     The ABCKey specified a Key or KeySignature.
@@ -987,10 +727,10 @@ class ABCKey(ABCMetadata, ABCClefMixin):
     'treble'
     """
 
+    TOKEN_REGEX = r'^K:.*$|\[K:[^\]\n%]*\]'
+
     def __init__(self, src: str):
         super().__init__(src)
-        ABCClefMixin.__init__(self, self.data)
-
         self.tonic: Optional[str] = None
         self.mode: Optional[str] = None
         self.alteredPitches: List[str] = []
@@ -1169,6 +909,7 @@ class ABCInstruction(ABCMetadata):
     >>> i.data
     'pitch'
     """
+    TOKEN_REGEX = r'^I:.*$|\[I:[^\]\n%]*\]'
 
     def __init__(self, src):
         super().__init__(src)
@@ -1182,17 +923,130 @@ class ABCMeter(ABCMetadata):
     If there is a time signature representation available,
     get a numerator, denominator and an abbreviation symbol.
     To get a music21 :class:`~music21.meter.TimeSignature` object, use
-    the :meth:`~music21.abcFormat.ABCMetadata.getTimeSignatureObject` method.
+    the :meth:`~music21.abcFormat.ABCMeter.getTimeSignatureObject` method.
+
+    >>> am = abcFormat.ABCMetadata('M: 2/4')
+    >>> am.signature
+    '2/4'
+
+    >>> am = abcFormat.ABCMetadata('M: (3+2)/4')
+    >>> am.signature
+
+    >>> am = abcFormat.ABCMetadata('M: C')
+    >>> am.signature
+    3/4+2/4
     '''
+
+    TOKEN_REGEX = r'^M:.*$|\[M:[^\]\n%]*\]'
 
     def __init__(self, src):
         super().__init__(src)
+
+        self.symbol: Optional[str] = None
+        self.numerators : List[int] = []
+        self.denominator : Optional[int] = None
+
+        if self.data.lower() == 'none':
+            return
+        elif self.data == 'C':
+            self.numerators = [4],
+            self.denominator = 4
+            self.symbol = 'common'
+        elif self.data == 'C|':
+            self.numerators = [2],
+            self.denominator = 2
+            self.symbol = 'cut'
+        else:
+            parts = self.data.split('/', 1)
+            num = parts[0].strip()
+            # using get number from string to handle odd cases such as
+            # FREI4/4
+            if num:
+                self.numerators = [int(n) for n in
+                                    common.getNumFromStr(num,numbers='0123456789+')[0].split('+')]
+            else:
+                # If the numerator is empty we assume it is '1'
+                self.numerators = [1]
+
+            try:
+                self.denominator = int(common.getNumFromStr(parts[1].strip())[0])
+            except ValueError:
+                # there is just a digit no fraction
+                # set the denumerator to 1
+                self.denominator = 1
+
+    def __float__(self):
+        return sum(self.numerators) / self.denominator
+
+    def getTimeSignatureObject(self) -> Optional['music21.meter.TimeSignature']:
+        '''
+        Return a music21 :class:`~music21.meter.TimeSignature`
+        object for this metadata tag, if isMeter is True, otherwise raise exception.
+
+        >>> am = abcFormat.ABCMetadata('M:2/2')
+        >>> am.getTimeSignatureObject()
+        <music21.meter.TimeSignature 2/2>
+
+        >>> am = abcFormat.ABCMetadata('M:C|')
+        >>> am.getTimeSignatureObject()
+        <music21.meter.TimeSignature 2/2>
+
+        >>> am = abcFormat.ABCMetadata('M:1+2/2')
+        >>> am.getTimeSignatureObject()
+        <music21.meter.TimeSignature 1/2+2/2>
+
+        >>> am = abcFormat.ABCMetadata('M:(2+2+2)/6')
+        >>> am.getTimeSignatureObject()
+        <music21.meter.TimeSignature 2/6+2/6+2/6>
+        '''
+        if self.numerators and self.denominator is not None:
+            s = "+".join(f'{n}/{self.denominator}' for n in self.numerators)
+            try:
+                ts = meter.TimeSignature(s)
+            except music21.exceptions21.Music21Exception:
+                raise ABCTokenException(f'Creating timesignature for "{s}" failed. ({self})')
+            ts.symbol = self.symbol
+            return ts
+        else:
+            return None
+
+
+    def getDefaultQuarterLength(self) -> float:
+        r'''
+        If there is a quarter length representation available,
+        return it as a floating point value
+        If taking from meter, find the "fraction" and if < 0.75 use sixteenth notes.
+        If >= 0.75 use eighth notes.
+
+        >>> am = abcFormat.ABCMetadata('M:C|')
+        >>> am.getDefaultQuarterLength()
+        0.5
+
+        >>> am = abcFormat.ABCMetadata('M:2/4')
+        >>> am.getDefaultQuarterLength()
+        0.25
+
+        >>> am = abcFormat.ABCMetadata('M:3/4')
+        >>> am.getDefaultQuarterLength()
+        0.5
+
+        >>> am = abcFormat.ABCMetadata('M:6/8')
+        >>> am.getDefaultQuarterLength()
+        0.5
+        '''
+
+        if self.denominator is None:
+            return 0.5  # TODO: assume default, need to configure
+
+        # less than 0.75 the default is a sixteenth note
+        return 0.25 if float(self) < 0.75 else 0.5
 
 
 RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
 
 class ABCLyrics(ABCToken):
     TOKEN_REGEX = r'w:.*((([\][\n]w)|([\n][+])):.*)*'
+
     def __init__(self, src: str):
         r'''
         >>> abc = ('w: ||A- ve Ma- ri- -\\\nw: |a! Jung- - - frau *|')
@@ -2684,44 +2538,36 @@ class ABCHandler:
         else:
             self.lastLyricNote.lyrics.append(token)
 
-    def process_ABCMetadata(self, token: ABCMetadata):
-        """
-        Process ABCMetadata tokens
-        """
-        if token.isMeter():
-            self.lastTimeSignatureObj = token.getTimeSignatureObject()
-            # restart matching conditions; match meter twice ok
-        if token.isDefaultNoteLength() or (token.isMeter() and self.lastDefaultQL is None):
+    def process_ABCMeter(self, token: ABCMeter):
+        self.lastTimeSignatureObj = token.getTimeSignatureObject()
+        if self.lastDefaultQL is None:
             self.lastDefaultQL = token.getDefaultQuarterLength()
-        elif token.isKey():
-            sharpCount, mode = token.getKeySignatureParameters()
-            from music21 import key
-            self.lastKeySignature = key.KeySignature(sharpCount)
-            if mode not in (None, ''):
-                self.lastKeySignature = self.lastKeySignature.asKey(mode)
-        elif token.isReferenceNumber():
-            # reset any spanners at the end of any piece
-            self.activeSpanner = []
-        elif token.isVoice():
-            self.lastLyricNote = None
-        elif token.isInstruction():
-            instruction = token.getInstruction()
-            if instruction is not None:
-                k, v = instruction
-                self.abcDirectives[k] = v
-                if k == 'PROPAGATE-ACCIDENTALS':
-                    self.accidental_propagation = self._accidentalPropagation()
 
-        elif token.isUserDefined():
-            try:
-                symbol, definition = token.getUserDefined()
-                if definition is None and symbol in self.userDefined:
-                    # return value of None indicates the symbol definition should deleted
-                    del self.userDefined[symbol]
-                else:
-                    self.userDefined[symbol] = definition
-            except ABCTokenException as e:
-                environLocal.printDebug(['Creating token form UserDefined failed.', e])
+    def process_ABCKey(self, token: ABCKey):
+        self.lastKeySignature = token.getKeySignatureObject()
+
+    def process_ABCReferenceNumber(self, token: ABCReferenceNumber):
+        self.activeSpanner = []
+
+    def process_ABCVoice(self, token: ABCVoice):
+        self.lastLyricNote = None
+
+    def process_ABCInstruction(self, token: ABCInstruction):
+        if token.key:
+            self.abcDirectives[token.key] = token.data
+            if k == 'propagate-accidentals':
+                self.accidental_propagation = self._accidentalPropagation()
+
+    def process_isUserDefined(self, token: ABCUserDefined):
+        try:
+            definition = token.tokenize()
+            if definition is None and token.symbol in self.userDefined:
+                # return value of None indicates the symbol definition should deleted
+                del self.userDefined[token.symbol]
+            else:
+                self.userDefined[token.symbol] = definition
+        except ABCTokenException as e:
+            environLocal.printDebug(['Creating token form UserDefined failed.', e])
 
     def process_ABCNote(self, token: ABCNote):
         self.process_ABCGeneralNote(token)
@@ -2975,7 +2821,7 @@ class ABCHandler:
         currentABCHandler = None
 
         for t in self.tokens:
-            if isinstance(t, ABCMetadata) and t.isReferenceNumber():
+            if isinstance(t, ABCReferenceNumber):
                 if currentABCHandler is not None:
                     currentABCHandler.tokens = activeTokens
                     activeTokens = []
