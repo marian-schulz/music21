@@ -31,10 +31,7 @@ from music21 import exceptions21
 from music21 import meter
 from music21 import tempo
 from music21 import stream
-from music21 import tie
-from music21 import articulations
 from music21 import note
-from music21 import chord
 from music21 import interval
 from music21.duration import GraceDuration
 from music21 import spanner
@@ -79,9 +76,7 @@ class ABCTranslator():
         target.coreInsert(0, self.metadata)
 
         for token in handler.tokens:
-
-            # Caching the method lookup has no performance benefits.
-            # find a process method for the token by class name
+            # find a transalte method for the token by class name
             token_translate_method = getattr(self, f'translate_{token.__class__.__name__}', None)
 
             # find a process method for the token by super class name
@@ -188,133 +183,63 @@ class ABCTokenTranslator(ABCTranslator):
         if m21object:
             self.parent.coreInsert(0, m21object)
 
-def abcToPart(handler: abcFormat.ABCProcessHandler, target: stream.Part):
-    has_measures = handler.definesMeasures()
-    if not has_measures:
-        translator = ABCTokenTranslator(parent=target)
-        translator.translate(handler=handler,target=target)
-        target.coreElementsChanged()
-    else:
-        translator = ABCTokenTranslator(parent=target)
-        for bar_number, abc_bar in enumerate(handler.splitByMeasure()):
-            m21_measure = stream.Measure()
 
-            if abc_bar.leftBarToken is not None:
-                # this may be Repeat Bar subclass
-                bLeft = abc_bar.leftBarToken.m21Object()
-                if bLeft is not None:
-                    m21_measure.leftBarline = bLeft
+def abcToMeasure(abcBar: abcFormat.ABCHandlerBar, target: stream.Measure, spannerBundle, translator):
 
-                if abc_bar.leftBarToken.isRepeatBracket():
-                    # get any open spanners of RepeatBracket type
-                    rbSpanners = spannerBundle.getByClass('RepeatBracket'
-                                                          ).getByCompleteStatus(False)
-                    # this indication is most likely an opening, as ABC does
-                    # not encode second ending ending boundaries
-                    # we can still check thought:
-                    if not rbSpanners:
-                        # add this measure as a component
-                        rb = spanner.RepeatBracket(m21_measure)
-                        # set number, returned here
-                        rb.number = abc_bar.leftBarToken.isRepeatBracket()
-                        # only append if created; otherwise, already stored
-                        spannerBundle.append(rb)
-                    else:  # close it here
-                        rb = rbSpanners[0]  # get RepeatBracket
-                        rb.addSpannedElements(m21_measure)
-                        rb.completeStatus = True
-                        # this returns 1 or 2 depending on the repeat
-                    # in ABC, second repeats close immediately; that is
-                    # they never span more than one measure
-                    if abc_bar.leftBarToken.isRepeatBracket() == 2:
-                        rb.completeStatus = True
+    translator.translate(abcBar, target=target)
 
-            if abc_bar.rightBarToken is not None:
-                bRight = abc_bar.rightBarToken.m21Object()
-                if bRight is not None:
-                    m21_measure.rightBarline = bRight
-                # above returns bars and repeats; we need to look if we just
-                # have repeats
-                if abc_bar.rightBarToken.isRepeat():
-                    # if we have a right bar repeat, and a spanner repeat
-                    # bracket is open (even if just assigned above) we need
-                    # to close it now.
-                    # presently, now r bar conditions start a repeat bracket
-                    rbSpanners = spannerBundle.getByClass(
-                        'RepeatBracket').getByCompleteStatus(False)
-                    if any(rbSpanners):
-                        rb = rbSpanners[0]  # get RepeatBracket
-                        rb.addSpannedElements(m21_measure)
-                        rb.completeStatus = True
-                        # this returns 1 or 2 depending on the repeat
-                        # do not need to append; already in bundle
+    if abcBar.leftBarToken is not None:
+        # this may be Repeat Bar subclass
+        bLeft = abcBar.leftBarToken.m21Object()
+        if bLeft is not None:
+            target.leftBarline = bLeft
 
-            translator.translate(handler=abc_bar, target=m21_measure)
+        if abcBar.leftBarToken.isRepeatBracket():
+            # get any open spanners of RepeatBracket type
+            rbSpanners = spannerBundle.getByClass('RepeatBracket'
+                                                  ).getByCompleteStatus(False)
+            # this indication is most likely an opening, as ABC does
+            # not encode second ending ending boundaries
+            # we can still check thought:
+            if not rbSpanners:
+                # add this measure as a component
+                rb = spanner.RepeatBracket(target)
+                # set number, returned here
+                rb.number = abcBar.leftBarToken.isRepeatBracket()
+                # only append if created; otherwise, already stored
+                spannerBundle.append(rb)
+            else:  # close it here
+                rb = rbSpanners[0]  # get RepeatBracket
+                rb.addSpannedElements(target)
+                rb.completeStatus = True
+                # this returns 1 or 2 depending on the repeat
+            # in ABC, second repeats close immediately; that is
+            # they never span more than one measure
+            if abcBar.leftBarToken.isRepeatBracket() == 2:
+                rb.completeStatus = True
 
-            # append measure to part; in the case of trailing meta data
-            # dst may be part, even though useMeasures is True
-            if 'Measure' in m21_measure.classes:
-                # check for incomplete bars
-                # must have a time signature in this bar, or defined recently
-                # could use getTimeSignatures() on Stream
-
-                if barCount == 1 and dst.timeSignature is not None:  # easy case
-                    # can only do this b/c ts is defined
-                    if dst.barDurationProportion() < 1.0:
-                        dst.padAsAnacrusis()
-                        dst.number = 0
-                        # environLocal.printDebug([
-                        #    'incompletely filled Measure found on abc import; ',
-                        #    'interpreting as a anacrusis:', 'paddingLeft:', dst.paddingLeft])
-                else:
-                    dst.number = measureNumber
-                    measureNumber += 1
-
-            target.coreAppend(m21_measure)
-
-        target.coreElementsChanged()
+    if abcBar.rightBarToken is not None:
+        bRight = abcBar.rightBarToken.m21Object()
+        if bRight is not None:
+            target.rightBarline = bRight
+        # above returns bars and repeats; we need to look if we just
+        # have repeats
+        if abcBar.rightBarToken.isRepeat():
+            # if we have a right bar repeat, and a spanner repeat
+            # bracket is open (even if just assigned above) we need
+            # to close it now.
+            # presently, now r bar conditions start a repeat bracket
+            rbSpanners = spannerBundle.getByClass(
+                'RepeatBracket').getByCompleteStatus(False)
+            if any(rbSpanners):
+                rb = rbSpanners[0]  # get RepeatBracket
+                rb.addSpannedElements(target)
+                rb.completeStatus = True
+                # this returns 1 or 2 depending on the repeat
+                # do not need to append; already in bundle
 
 
-def abcToScore(handler: abcFormat.ABCHandler):
-
-    # Get header & voice handler
-    header, voices = handler.splitByVoice()
-    score = stream.Score()
-
-    # create the Header Transaltor & translate the header handler
-    header_translator = ABCHeaderTranslator()
-    header_translator.translate(header, score)
-
-
-    if header_translator.metronomeMark:
-        score.coreInsert(0, header_translator.metronomeMark)
-
-    for voice_id, voice_handler in voices:
-        part = stream.Part()
-        part.keySignature = header_translator.keySignature
-        part.timeSignature = header_translator.timeSignature
-
-        if voice_id in header_translator.voices:
-            part.clef = header_translator.voices[voice_id].clef
-            octave = header_translator.voices[voice_id].octave
-        else:
-            part.clef = header_translator.clef
-            octave = header_translator.octave
-
-        abcToPart(handler=voice_handler, target=part)
-
-        if octave != 0:
-            part.transpose(
-                interval.Interval(diatonic=interval.DiatonicInterval(octave*8)),
-                inPlace=True)
-
-        score.coreInsert(0, part)
-
-        #voice_translator.instrumentObject = header_translator.midi[voice_id]
-    score.coreElementsChanged()
-
-
-def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
+def abcToStreamPart(handler: abcFormat.ABCProcessHandler, inputM21: stream.Part) -> stream.Part:
     '''
     Handler conversion of a single Part of a multi-part score.
     Results are added into the provided inputM21 object
@@ -323,264 +248,78 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     The part object is then returned.
     '''
 
+    m21Part = stream.Part() if inputM21 is None else inputM21
+    spannerBundle = spanner.SpannerBundle()
 
-    if inputM21 is None:
-        p = stream.Part()
+    hasMeasures = handler.definesMeasures()
+    if not hasMeasures:
+        translator = ABCTokenTranslator(parent=m21Part)
+        translator.translate(handler=handler, target=m21Part)
     else:
-        p = inputM21
+        translator = ABCTokenTranslator(parent=m21Part)
+        translator.timeSignature = m21Part.timeSignature
+        barHandlers = handler.splitByMeasure()
 
-    if spannerBundle is None:
-        # environLocal.printDebug(['mxToMeasure()', 'creating SpannerBundle'])
-        spannerBundle = spanner.SpannerBundle()
+        for barNumber, abcBar in enumerate(barHandlers):
+            m21Measure = stream.Measure()
+            abcToMeasure(abcBar, m21Measure, spannerBundle, translator)
 
-    clefSet = None
-    postTransposition = 0
+            # append measure to part; in the case of trailing meta data
+            # dst may be part, even though useMeasures is True
+            if 'Measure' not in m21Measure.classes:
+                environLocal.warn(f'No "Measure" class found in "{m21Measure}"')
+                continue
 
-    # need to call on entire handlers, as looks for special criteria,
-    # like that at least 2 regular bars are used, not just double bars
-    if abcHandler.definesMeasures():
-        # first, split into a list of Measures; if there is only metadata and
-        # one measure, that means that no measures are defined
-        barHandlers = abcHandler.splitByMeasure()
-        # environLocal.printDebug(['barHandlers', len(barHandlers)])
-        # merge loading meta data with each bar that precedes it
-        mergedHandlers = abcFormat.mergeLeadingMetaData(barHandlers)
-        # environLocal.printDebug(['mergedHandlers', len(mergedHandlers)])
-    else:  # simply stick in a single list
-        mergedHandlers = [abcHandler]
-
-    # if only one merged handler, do not create measures
-    if len(mergedHandlers) <= 1:
-        useMeasures = False
-    else:
-        useMeasures = True
-
-    # each unit in merged handlers defines possible a Measure (w/ or w/o metadata),
-    # trailing meta data, or a single collection of metadata and note data
-
-    barCount = 0
-    measureNumber = 1
-    # merged handler are ABCHandlerBar objects, defining attributes for barlines
-    global LYRIC_VERSES
-    LYRIC_VERSES = []
-
-    for mh in mergedHandlers:
-        # if use measures and the handler has notes; otherwise add to part
-        # environLocal.printDebug(['abcToStreamPart', 'handler', 'left:', mh.leftBarToken,
-        #    'right:', mh.rightBarToken, 'len(mh)', len(mh)])
-
-        if useMeasures and mh.hasNotes():
-            # environLocal.printDebug(['abcToStreamPart', 'useMeasures',
-            #    useMeasures, 'mh.hasNotes()', mh.hasNotes()])
-            dst = stream.Measure()
-            # bar tokens are already extracted form token list and are available
-            # as attributes on the handler object
-            # may return None for a regular barline
-
-            if mh.leftBarToken is not None:
-                # this may be Repeat Bar subclass
-                bLeft = mh.leftBarToken.m21Object()
-                if bLeft is not None:
-                    dst.leftBarline = bLeft
-                if mh.leftBarToken.isRepeatBracket():
-                    # get any open spanners of RepeatBracket type
-                    rbSpanners = spannerBundle.getByClass('RepeatBracket'
-                                                          ).getByCompleteStatus(False)
-                    # this indication is most likely an opening, as ABC does
-                    # not encode second ending ending boundaries
-                    # we can still check thought:
-                    if not rbSpanners:
-                        # add this measure as a component
-                        rb = spanner.RepeatBracket(dst)
-                        # set number, returned here
-                        rb.number = mh.leftBarToken.isRepeatBracket()
-                        # only append if created; otherwise, already stored
-                        spannerBundle.append(rb)
-                    else:  # close it here
-                        rb = rbSpanners[0]  # get RepeatBracket
-                        rb.addSpannedElements(dst)
-                        rb.completeStatus = True
-                        # this returns 1 or 2 depending on the repeat
-                    # in ABC, second repeats close immediately; that is
-                    # they never span more than one measure
-                    if mh.leftBarToken.isRepeatBracket() == 2:
-                        rb.completeStatus = True
-
-            if mh.rightBarToken is not None:
-                bRight = mh.rightBarToken.m21Object()
-                if bRight is not None:
-                    dst.rightBarline = bRight
-                # above returns bars and repeats; we need to look if we just
-                # have repeats
-                if mh.rightBarToken.isRepeat():
-                    # if we have a right bar repeat, and a spanner repeat
-                    # bracket is open (even if just assigned above) we need
-                    # to close it now.
-                    # presently, now r bar conditions start a repeat bracket
-                    rbSpanners = spannerBundle.getByClass(
-                        'RepeatBracket').getByCompleteStatus(False)
-                    if any(rbSpanners):
-                        rb = rbSpanners[0]  # get RepeatBracket
-                        rb.addSpannedElements(dst)
-                        rb.completeStatus = True
-                        # this returns 1 or 2 depending on the repeat
-                        # do not need to append; already in bundle
-            barCount += 1
-        else:
-            dst = p  # store directly in a part instance
-
-        # environLocal.printDebug([mh, 'dst', dst])
-        # ql = 0  # might not be zero if there is a pickup
-
-        transposition, clefSet, lyrics = parseTokens(mh, dst, p, useMeasures, spannerBundle=spannerBundle)
-        if transposition is not None:
-            postTransposition = transposition
-
-        # append measure to part; in the case of trailing meta data
-        # dst may be part, even though useMeasures is True
-        if useMeasures and 'Measure' in dst.classes:
             # check for incomplete bars
-            # must have a time signature in this bar, or defined recently
-            # could use getTimeSignatures() on Stream
+            if barNumber == 0:
+                if m21Part.timeSignature is not None:  # easy case
+                    # can only do this b/c ts is defined
+                    if m21Measure.barDurationProportion() < 1.0:
+                        m21Measure.padAsAnacrusis()
 
-            if barCount == 1 and dst.timeSignature is not None:  # easy case
-                # can only do this b/c ts is defined
-                if dst.barDurationProportion() < 1.0:
-                    dst.padAsAnacrusis()
-                    dst.number = 0
-                    # environLocal.printDebug([
-                    #    'incompletely filled Measure found on abc import; ',
-                    #    'interpreting as a anacrusis:', 'paddingLeft:', dst.paddingLeft])
-            else:
-                dst.number = measureNumber
-                measureNumber += 1
-            p.coreAppend(dst)
+            m21Measure.number = barNumber
+            m21Part.coreAppend(m21Measure)
 
-    #if abcHandler.lyrics:
-   #    add_lyrics(p, abcHandler.lyrics)
+    m21Part.coreElementsChanged()
 
     try:
-        pass
-        reBar(p, inPlace=True)
+        reBar(m21Part, inPlace=True)
     except (ABCTranslateException, meter.MeterException, ZeroDivisionError):
         pass
 
     # clefs are not typically defined, but if so, are set to the first measure
     # following the meta data, or in the open stream
+    """
     if not clefSet and not p.recurse().getElementsByClass('Clef'):
         if useMeasures:  # assume at start of measures
             p.getElementsByClass('Measure')[0].clef = clef.bestClef(p, recurse=True)
         else:
             p.coreInsert(0, clef.bestClef(p, recurse=True))
-
-    if postTransposition != 0:
-
-
-    if useMeasures and p.recurse().getElementsByClass('TimeSignature'):
+    """
+    if hasMeasures and p.recurse().getElementsByClass('TimeSignature'):
         # call make beams for now; later, import beams
         # environLocal.printDebug(['abcToStreamPart: calling makeBeams'])
         try:
-            p.makeBeams(inPlace=True)
+            m21Part.makeBeams(inPlace=True)
         except (meter.MeterException, stream.StreamException) as e:
             environLocal.warn(f'Error in beaming...ignoring: {e}')
 
     # copy spanners into topmost container; here, a part
     rm = []
     for sp in spannerBundle.getByCompleteStatus(True):
-        p.coreInsert(0, sp)
+        m21Part.coreInsert(0, sp)
         rm.append(sp)
     # remove from original spanner bundle
     for sp in rm:
         spannerBundle.remove(sp)
-    p.coreElementsChanged()
-    return p
+
+    m21Part.coreElementsChanged()
+    return m21Part
 
 
 LYRIC_VERSES = []
 
-def parseTokens(mh, dst, p, useMeasures, spannerBundle):
-    '''
-    parses all the tokens in a measure or part.
-    '''
-    # in case need to transpose due to clef indication
-    from music21 import abcFormat
-    global LYRIC_VERSES
-    voice_id = None
-    # is a dictonary of dictonaries
-    # { voive_id: { property_key: data }}
-    voice_data = defaultdict(dict)
-    score = {}
-    postTransposition = None
-    clefSet = False
-    skip_measure = False
-    for t in mh.tokens:
-        if isinstance(t, abcFormat.ABCMetadata):
-            if t.isInstruction():
-                i_key, i_data = t.getInstruction()
-                if i_key == 'MIDI':
-                    try:
-                        voice, instrument = get_midi_voice(i_data)
-                        voice_data[voice]['MIDI'] = instrument
-                    except ABCTranslateException as e:
-                        environLocal.printDebug([e])
-
-                #elif i_key == 'SCORE':
-                #    try:
-                #        score = get_score_groups(i_data)
-                #    except ABCTranslateException as e:
-                #        environLocal.printDebug([e])
-            elif t.isVoice():
-                voice_id = t.getVoiceData()['id']
-                clefObj, transposition = t.getClefObject()
-                if clefObj:
-                    voice_data[voice_id]['CLEF'] = clefObj
-                    voice_data[voice_id]['TRANSPOSITION'] = transposition
-            elif t.isMeter():
-                ts = t.getTimeSignatureObject()
-                if ts is not None:  # can be None
-                    # should append at the right position
-                    if useMeasures:  # assume at start of measures
-                        dst.timeSignature = ts
-                    else:
-                        dst.coreAppend(ts)
-            elif t.isKey():
-                ks = t.getKeySignatureObject()
-                if useMeasures:  # assume at start of measures
-                    p.keySignature = ks
-                else:
-                    dst.coreAppend(ks)
-                # check for clef information sometimes stored in key
-                clefObj, transposition = t.getClefObject()
-                if clefObj is not None:
-                    clefSet = False
-                    # environLocal.printDebug(['found clef in key token:', t,
-                    #     clefObj, transposition])
-                    if useMeasures:  # assume at start of measures
-                        p.clef = clefObj
-                    else:
-                        dst.coreAppend(clefObj)
-                    postTransposition = transposition
-
-            elif t.isTempo():
-                mmObj = t.getMetronomeMarkObject()
-                dst.coreAppend(mmObj)
-
-        elif isinstance(t, (abcFormat.ABCGeneralNote, abcFormat.ABCMark)):
-            if isinstance(t, abcFormat.ABCGeneralNote):
-                if t.lyrics:
-                    # we found lyrics atached to this note
-                    LYRIC_VERSES = [ verse.syllables for verse in t.lyrics ]
-
-            n = t.m21Object()
-            if n is None:
-                environLocal.printDebug([f'M21Object for token "{t} is None.'])
-                continue
-            dst.coreAppend(n, setActiveSite=False)
-
-        elif isinstance(t, abcFormat.ABCSpanner):
-            p.coreInsert(0, t.m21Object())
-
-
+"""
     for verse_number, verse in enumerate(LYRIC_VERSES):
         if verse:
             # look at the first syllable and skip the measure on '|'
@@ -617,15 +356,6 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
                 n.lyrics.append(note.Lyric(number=verse_number, text=syllable))
 
 
-    """
-    staffGroup1 = layout.StaffGroup([p1, p2],
-
-         name='Marimba', abbreviation='Mba.', symbol='brace')
-
-    staffGroup1.barTogether = 'Mensurstrich'
-
-    s.insert(0, staffGroup1)
-    """
     if voice_id and voice_id in voice_data:
         voice_data = voice_data[voice_id]
         if 'MIDI' in voice_data:
@@ -634,13 +364,9 @@ def parseTokens(mh, dst, p, useMeasures, spannerBundle):
             p.coreInsert(0.0, voice_data['CLEF'])
         if 'TRANSPOSITION' in voice_data:
             postTransposition = voice_data['TRANSPOSITION']
+"""
 
-    dst.coreElementsChanged()
-    lyrics = None
-    return postTransposition, clefSet, lyrics
-
-
-def abcToStreamScore(abcHandler, inputM21=None):
+def abcToStreamScore(abcHandler, inputM21: stream.Score=None):
     '''
     Given an abcHandler object, build into a
     multi-part :class:`~music21.stream.Score` with metadata.
@@ -651,8 +377,6 @@ def abcToStreamScore(abcHandler, inputM21=None):
     as the outermost object.  However, inner parts will
     always be made :class:`~music21.stream.Part` objects.
     '''
-    from music21 import abcFormat
-    from music21 import metadata
 
     if inputM21 is None:
         s = stream.Score()
