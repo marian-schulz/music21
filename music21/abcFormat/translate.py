@@ -29,6 +29,7 @@ from music21 import common
 from music21 import environment
 from music21 import exceptions21
 from music21 import meter
+from music21 import tempo
 from music21 import stream
 from music21 import tie
 from music21 import articulations
@@ -38,28 +39,18 @@ from music21 import interval
 from music21.duration import GraceDuration
 from music21 import spanner
 from music21 import harmony
+from music21 import key
 from music21 import instrument
 from collections import defaultdict
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Union, Optional
+from music21 import abcFormat
+
 
 environLocal = environment.Environment('abcFormat.translate')
 
 
 class ABCTranslateException(exceptions21.Music21Exception):
     pass
-
-def get_score_groups(src):
-    # @TODO: Grouping staffs of voices
-    pass
-
-"""
-- 	(hyphen) break between syllables within a word
-_ 	(underscore) previous syllable is to be held for an extra note
-* 	one note is skipped (i.e. * is equivalent to a blank syllable)
-~ 	appears as a space; aligns multiple words under one note
-\- 	appears as hyphen; aligns multiple syllables under one note
-| 	advances to the next bar
-"""
 
 MIDI_RE = re.compile('voice\s*(?P<voice>.+)\s+instrument\s*=\s*(?P<instrument>.*)')
 def get_midi_voice(instruction: str) -> Tuple[str, int]:
@@ -78,6 +69,251 @@ def get_midi_voice(instruction: str) -> Tuple[str, int]:
         raise ABCTranslateException(f'Invalid midi instruction: "{instruction}"')
 
 
+class ABCTranslator():
+
+    def __init__(self):
+        self.metadata = None
+
+    def translate(self, handler: abcFormat.ABCHandler, target: stream.Stream):
+        self.metadata = music21.metadata.Metadata()
+        target.coreInsert(0, self.metadata)
+
+        for token in handler.tokens:
+
+            # Caching the method lookup has no performance benefits.
+            # find a process method for the token by class name
+            token_translate_method = getattr(self, f'translate_{token.__class__.__name__}', None)
+
+            # find a process method for the token by super class name
+            if token_translate_method is None:
+                for token_base_class in token.__class__.__bases__:
+                    token_translate_method = f'translate_{token_base_class.__name__}'
+                    if hasattr(self, token_translate_method):
+                        token_translate_method = getattr(self, token_translate_method)
+                        break
+                else:
+                    environLocal.printDebug([f'No translation method for token: "{token}" found.'])
+                    continue
+
+            if token_translate_method is not None:
+                m21_object = token_translate_method(token)
+                if m21_object is not None:
+                    target.coreAppend(m21_object, setActiveSite=False)
+
+    def translate_ABCTitle(self, token: abcFormat.ABCTitle):
+        if self.metadata.title:
+            self.metadata.alternativeTitle = token.data
+        else:
+            self.metadata.title = token.data
+
+    def translate_ABCOrigin(self, token: abcFormat.ABCOrigin):
+        self.metadata.localeOfComposition = token.data
+
+    def translate_ABCComposer(self, token: abcFormat.ABCComposer):
+        self.metadata.composers.append(token.data)
+
+    def translate_ReferenceNumber(self, token: abcFormat.ABCReferenceNumber):
+        # Convert referenceNumber to a number string
+        self.metadataObject.number, _ = common.getNumFromStr(token.data)
+
+
+class ABCHeaderTranslator(ABCTranslator):
+
+    def __init__(self):
+        self.voices : [str, abcFormat.ABCVoice] = {}
+        self.midi = {}
+        self.clef = Optional[clef.Clef] = None
+        self.keySignature: Optional[key.KeySignature] = None
+        self.metronomeMark = Optional[tempo.MetronomeMark] = None
+        self.timeSignature = None
+        self.octave: int = 0
+
+    def translate_ABCVoice(self, token: abcFormat.ABCVoice):
+        self.voices[token.id] = token
+
+    def translate_ABCInstruction(self, token: abcFormat.ABCInstruction):
+        if token.key.lower() == 'midi':
+            try:
+                voice_id, instrumentObject = get_midi_voice(token.instuction)
+                self.midi['midi'] = instrumentObject
+            except ABCTranslateException as e:
+                environLocal.printDebug([e])
+
+    def translate_ABCMeter(self, token: abcFormat.ABCMeter):
+        self.timeSignature= token.getTimeSignatureObject()
+
+    def translate_ABCKey(self, token: abcFormat.ABCKey):
+        self.clef = token.clef
+        self.octave = token.octave
+        self.keySignature = token.getKeySignatureObject()
+
+    def translate_ABCTempo(self, token: abcFormat.ABCTempo):
+        self.metronomeMarker = token.getMetronomeMarkObject()
+
+
+class ABCTokenTranslator(ABCTranslator):
+
+    def __init__(self, parent: stream.Part):
+        super().__init__()
+        self.parent = parent
+        self.clef = None
+        self.timeSignature = None
+
+    def translate(self, handler: abcFormat.ABCHandler, target: Union[stream.Measure, stream.Part]):
+        super().translate(handler, target)
+        if self.timeSignature:
+            target.timeSignature = self.timeSignature
+        if self.clef:
+            target.timeSignature = self.clef
+
+    def translate_ABCMeter(self, token: abcFormat.ABCMeter):
+        self.timeSignature = token.getTimeSignatureObject()
+
+    def translate_ABCKey(self, token: abcFormat.ABCKey):
+        self.clef = token.clef
+        self.octave = token.octave
+        return token.getKeySignatureObject()
+
+    def translate_ABCTempo(self, token: abcFormat.ABCTempo):
+        return token.getMetronomeMarkObject()
+
+    def translate_ABCGeneralNote(self, token: abcFormat.ABCGeneralNote):
+        return token.m21Object()
+
+    def translate_ABCMark(self, token: abcFormat.ABCMark):
+        return token.m21Object()
+
+    def translate_ABCSpanner(self, token: abcFormat.ABCSpanner):
+        m21object = token.m21Object()
+        if m21object:
+            self.parent.coreInsert(0, m21object)
+
+def abcToPart(handler: abcFormat.ABCProcessHandler, target: stream.Part):
+    has_measures = handler.definesMeasures()
+    if has_measures:
+        translator = ABCTokenTranslator(handler=handler, parent=target)
+        translator.translate(target=target)
+        target.coreElementsChanged()
+    else:
+        translator = ABCTokenTranslator(parent=target)
+        for bar_number, abc_bar in enumerate(handler.splitByMeasure()):
+            m21_measure = stream.Measure()
+
+            if abc_bar.leftBarToken is not None:
+                # this may be Repeat Bar subclass
+                bLeft = abc_bar.leftBarToken.m21Object()
+                if bLeft is not None:
+                    m21_measure.leftBarline = bLeft
+
+                if abc_bar.leftBarToken.isRepeatBracket():
+                    # get any open spanners of RepeatBracket type
+                    rbSpanners = spannerBundle.getByClass('RepeatBracket'
+                                                          ).getByCompleteStatus(False)
+                    # this indication is most likely an opening, as ABC does
+                    # not encode second ending ending boundaries
+                    # we can still check thought:
+                    if not rbSpanners:
+                        # add this measure as a component
+                        rb = spanner.RepeatBracket(m21_measure)
+                        # set number, returned here
+                        rb.number = abc_bar.leftBarToken.isRepeatBracket()
+                        # only append if created; otherwise, already stored
+                        spannerBundle.append(rb)
+                    else:  # close it here
+                        rb = rbSpanners[0]  # get RepeatBracket
+                        rb.addSpannedElements(m21_measure)
+                        rb.completeStatus = True
+                        # this returns 1 or 2 depending on the repeat
+                    # in ABC, second repeats close immediately; that is
+                    # they never span more than one measure
+                    if abc_bar.leftBarToken.isRepeatBracket() == 2:
+                        rb.completeStatus = True
+
+            if abc_bar.rightBarToken is not None:
+                bRight = abc_bar.rightBarToken.m21Object()
+                if bRight is not None:
+                    m21_measure.rightBarline = bRight
+                # above returns bars and repeats; we need to look if we just
+                # have repeats
+                if abc_bar.rightBarToken.isRepeat():
+                    # if we have a right bar repeat, and a spanner repeat
+                    # bracket is open (even if just assigned above) we need
+                    # to close it now.
+                    # presently, now r bar conditions start a repeat bracket
+                    rbSpanners = spannerBundle.getByClass(
+                        'RepeatBracket').getByCompleteStatus(False)
+                    if any(rbSpanners):
+                        rb = rbSpanners[0]  # get RepeatBracket
+                        rb.addSpannedElements(m21_measure)
+                        rb.completeStatus = True
+                        # this returns 1 or 2 depending on the repeat
+                        # do not need to append; already in bundle
+
+            translator.translate(handler=abc_bar, target=m21_measure)
+
+            # append measure to part; in the case of trailing meta data
+            # dst may be part, even though useMeasures is True
+            if 'Measure' in m21_measure.classes:
+                # check for incomplete bars
+                # must have a time signature in this bar, or defined recently
+                # could use getTimeSignatures() on Stream
+
+                if barCount == 1 and dst.timeSignature is not None:  # easy case
+                    # can only do this b/c ts is defined
+                    if dst.barDurationProportion() < 1.0:
+                        dst.padAsAnacrusis()
+                        dst.number = 0
+                        # environLocal.printDebug([
+                        #    'incompletely filled Measure found on abc import; ',
+                        #    'interpreting as a anacrusis:', 'paddingLeft:', dst.paddingLeft])
+                else:
+                    dst.number = measureNumber
+                    measureNumber += 1
+
+            target.coreAppend(m21_measure)
+
+        target.coreElementsChanged()
+
+
+def abcToScore(handler: abcFormat.ABCHandler):
+
+    # Get header & voice handler
+    header, voices = handler.splitByVoice()
+    score = stream.Score()
+
+    # create the Header Transaltor & translate the header handler
+    header_translator = ABCHeaderTranslator()
+    header_translator.translate(header, score)
+
+
+    if header_translator.metronomeMark:
+        score.coreInsert(0, header_translator.metronomeMark)
+
+    for voice_id, voice_handler in voices:
+        part = stream.Part()
+        part.keySignature = header_translator.keySignature
+        part.timeSignature = header_translator.timeSignature
+
+        if voice_id in header_translator.voices:
+            part.clef = header_translator.voices[voice_id].clef
+            octave = header_translator.voices[voice_id].octave
+        else:
+            part.clef = header_translator.clef
+            octave = header_translator.octave
+
+        abcToPart(handler=voice_handler, target=part)
+
+        if octave != 0:
+            part.transpose(
+                interval.Interval(diatonic=interval.DiatonicInterval(octave*8)),
+                inPlace=True)
+
+        score.coreInsert(0, part)
+
+        #voice_translator.instrumentObject = header_translator.midi[voice_id]
+    score.coreElementsChanged()
+
+
 def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
     '''
     Handler conversion of a single Part of a multi-part score.
@@ -86,7 +322,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
 
     The part object is then returned.
     '''
-    from music21 import abcFormat
+
 
     if inputM21 is None:
         p = stream.Part()
@@ -238,11 +474,7 @@ def abcToStreamPart(abcHandler, inputM21=None, spannerBundle=None):
             p.coreInsert(0, clef.bestClef(p, recurse=True))
 
     if postTransposition != 0:
-        from music21 import interval
-        p.transpose(
-            interval.Interval(
-                diatonic=interval.ChromaticInterval(postTransposition).getDiatonic())
-            , inPlace=True)
+
 
     if useMeasures and p.recurse().getElementsByClass('TimeSignature'):
         # call make beams for now; later, import beams
@@ -428,33 +660,28 @@ def abcToStreamScore(abcHandler, inputM21=None):
         s = inputM21
 
     # meta data can be first
-    md = metadata.Metadata()
+    if abcHandler.metadataObject:
+
+    md = abcHandler.metadataObject
+    if md is None:
+        md = metadata.Metadata()
     s.insert(0, md)
 
     # get title from large-scale metadata
     titleCount = 0
     for t in abcHandler.tokens:
-        if isinstance(t, abcFormat.ABCMetadata):
-            if t.isTitle():
-                if titleCount == 0:  # first
-                    md.title = t.data
-                    # environLocal.printDebug(['got metadata title', md.title])
-                    titleCount += 1
-                # all other titles go in alternative field
-                else:
-                    md.alternativeTitle = t.data
-                    # environLocal.printDebug(['got alternative title', md.alternativeTitle])
-                    titleCount += 1
-            elif t.isComposer():
-                md.composer = t.data
-
-            elif t.isOrigin():
-                md.localeOfComposition = t.data
-                # environLocal.printDebug(['got local of composition', md.localOfComposition])
-
-            elif t.isReferenceNumber():
-                md.number = int(t.data)  # convert to int?
-                # environLocal.printDebug(['got work number', md.number])
+        if isinstance(t, abcFormat.ABCTitle):
+            if titleCount == 0:  # first
+                md.title = t.data
+                # environLocal.printDebug(['got metadata title', md.title])
+                titleCount += 1
+            # all other titles go in alternative field
+        else:
+            md.alternativeTitle = t.data
+            # environLocal.printDebug(['got alternative title', md.alternativeTitle])
+            titleCount += 1
+        elif isinstance(t, ):
+            md.composer = t.data
 
     # split the tune is voices (part)
     # each voice has leading metadata from the tune

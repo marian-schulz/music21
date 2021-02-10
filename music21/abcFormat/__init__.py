@@ -49,7 +49,7 @@ __all__ = [
     'ABCSlurStart', 'ABCParenStop', 'ABCCrescStart', 'ABCDimStart',
     'ABCGraceStart', 'ABCGraceStop', 'ABCBrokenRhythm',
     'ABCNote', 'ABCChord', 'ABCGeneralNote', 'ABCRest',
-    'ABCHandler', 'ABCHandlerBar',
+    'ABCHandler', 'ABCHandlerBar', 'ABCProcessor',
     'mergeLeadingMetaData',
     'ABCFile',
 ]
@@ -71,6 +71,7 @@ from music21 import expressions
 from music21 import dynamics
 from music21 import repeat
 from music21 import meter
+from music21 import metadata
 
 from music21.abcFormat import translate
 from music21.abcFormat import testFiles
@@ -388,7 +389,7 @@ CLEF_RE = re.compile(CLEF_RE, re.MULTILINE)
 
 class ABCMetadata(ABCToken):
 
-    TOKEN_REGEX = r'^[ABCDFGHmNOPRrSsTWZ]:.*$|\[[mnPRr]:[^\]\n%]*\]'
+    TOKEN_REGEX = r'^[ABDFGHmNPRrSsWZ]:.*$|\[[mnPRr]:[^\]\n%]*\]'
 
     def __init__(self, src):
         super().__init__(src)
@@ -407,6 +408,14 @@ class ABCMetadata(ABCToken):
 class ABCReferenceNumber(ABCMetadata):
     TOKEN_REGEX = r'^X:.*$'
 
+class ABCTitle(ABCMetadata):
+    TOKEN_REGEX = r'^T:.*$'
+
+class ABCOrigin(ABCMetadata):
+    TOKEN_REGEX = r'^O:.*$'
+
+class ABCComposer(ABCMetadata):
+    TOKEN_REGEX = r'^O:.*$'
 
 class ABCUnitNoteLength(ABCMetadata):
     r"""
@@ -418,17 +427,15 @@ class ABCUnitNoteLength(ABCMetadata):
     'quarter'
 
     >>> am = abcFormat.ABCMetadata('L:1/2')
-    >>> am.getDefaultQuarterLength()
+    >>> am.defaultQuarterLength()
     2.0
 
     >>> am = abcFormat.ABCMetadata('L:1/8')
-    >>> am.getDefaultQuarterLength()
-    0.5
-
-    >>> am = abcFormat.ABCMetadata('M:C|')
-    >>> am.getDefaultQuarterLength()
+    >>> am.defaultQuarterLength
     0.5
     """
+    TOKEN_REGEX = r'^L:.*$'
+
     def __init__(self, src):
         super().__init__(src)
         if '/' in self.data:
@@ -442,12 +449,12 @@ class ABCUnitNoteLength(ABCMetadata):
             else:
                 d = int(d.strip())
             # 1/4 is 1, 1/8 is 0.5
-            self.DefaultQuarterLength = n * 4 / d
+            self.defaultQuarterLength = n * 4 / d
         else:
             raise ABCTokenException(f'Invalid form of the unit not length "{self.src}"')
 
 
-class ABCClef(ABCMetadata):
+class ABCClef():
     """
     The clefs with the +/-8 at then end transpose the melody an octave
     up or down if no octave modifier has explicitly set.
@@ -491,8 +498,7 @@ class ABCClef(ABCMetadata):
         'mezzosoprano': clef.MezzoSopranoClef, 'c2': clef.MezzoSopranoClef
     }
 
-    def __init__(self, src: str):
-        super().__init__(src)
+    def __init__(self, data: str):
         self.transpose = 0
         self.name = None
         self.octave = None
@@ -500,7 +506,7 @@ class ABCClef(ABCMetadata):
 
         # list of unamed matches
         unamed  = []
-        for m in CLEF_RE.finditer(self.data):
+        for m in CLEF_RE.finditer(data):
             k = m.lastgroup
             v = m.group()
             if k in ['transpose', 'octave', 'name']:
@@ -528,7 +534,7 @@ class ABCClef(ABCMetadata):
 
 
 VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*\S+)|(?P<subname>(subname|snm)\s*=\s*\S+)')
-class ABCVoice(ABCClef):
+class ABCVoice(ABCMetadata,  ABCClef):
 
     TOKEN_REGEX = r'^V:.*$|\[V:[^\]\n%]*\]'
 
@@ -548,6 +554,7 @@ class ABCVoice(ABCClef):
         'treble'
         """
         super().__init__(src)
+        ABCClef.__init__(self, self.data)
         self.id : str = ''
         self.name : Optional[str] = None
         self.subname: Optional[str] = None
@@ -564,7 +571,7 @@ class ABCVoice(ABCClef):
 
 class ABCTempo(ABCMetadata):
     """
-    >>> am = abcFormat.ABCMetadata('Q: "Allegro" 1/4=120')
+    >>> am = abcFormat.ABCTempo('Q: "Allegro" 1/4=120')
     >>> am.getMetronomeMarkObject()
     <music21.tempo.MetronomeMark Allegro Quarter=120.0>
     """
@@ -651,7 +658,7 @@ class ABCTempo(ABCMetadata):
         return mmObj
 
 
-class ABCUserDefined(ABCMetadata):
+class ABCUserDefinition(ABCMetadata):
     r"""
     This is the Token for the ABC filed 'U:'
     The token creates ABCTokens for a userdefined symbol
@@ -681,7 +688,7 @@ class ABCUserDefined(ABCMetadata):
             return ABCHandler(abcVersion=parent.abcVersion).tokenize(self.definition)
 
 
-class ABCKey(ABCClef):
+class ABCKey(ABCMetadata, ABCClef):
     r"""
     This is the Token for the ABC filed 'K:'
     The ABCKey specified a Key or KeySignature.
@@ -698,39 +705,32 @@ class ABCKey(ABCClef):
     However, it can also specify a clef in addition.
     The clef follows after the key and key modifications
 
-    >>> am = abcFormat.ABCKey('')
-    >>> am.getKeySignatureParameters()
-    >>> self.tonic
-    None
-    >>> self.mode
-    None
-    >>> self.altered_pitches
+    >>> am = abcFormat.ABCKey('K:')
+    >>> am.tonic is None
+    True
+    >>> am.mode is None
+    True
+    >>> am.alteredPitches
     []
 
-    >>> am = abcFormat.ABCKey('Eb Lydian')
-    >>> self.tonic
+    >>> am = abcFormat.ABCKey('K:Eb Lydian ^d treble')
+    >>> am.tonic
     'E-'
-    >>> self.mode
-    'Lydian'
-
-    >>> am = abcFormat.ABCKey('C ^d')
-    >>> self.tonic
-    'C'
-    >>> self.mode
-    'major'
-    >>> self.altered_pitches
+    >>> am.mode
+    'lydian'
+    >>> am.alteredPitches
     ['D#']
-
-    We got also clef informations from a key field
-    >>> v = abcFormat.ABCVoice("K:C treble")
-    >>> v.clef
-    'treble'
+    >>> am.getKeySignatureObject()
+    <>
+    >>> am.getClefObject()
+    <>
     """
 
     TOKEN_REGEX = r'^K:.*$|\[K:[^\]\n%]*\]'
 
     def __init__(self, src: str):
         super().__init__(src)
+        ABCClef.__init__(self, self.data)
         self.tonic: Optional[str] = None
         self.mode: Optional[str] = None
         self.alteredPitches: List[str] = []
@@ -915,7 +915,7 @@ class ABCInstruction(ABCMetadata):
         super().__init__(src)
         parts = self.data.split(' ', 1)
         self.key = parts[0].strip()
-        self.data = parts[1].strip()
+        self.instuction = parts[1].strip()
 
 
 class ABCMeter(ABCMetadata):
@@ -925,16 +925,13 @@ class ABCMeter(ABCMetadata):
     To get a music21 :class:`~music21.meter.TimeSignature` object, use
     the :meth:`~music21.abcFormat.ABCMeter.getTimeSignatureObject` method.
 
-    >>> am = abcFormat.ABCMetadata('M: 2/4')
-    >>> am.signature
-    '2/4'
-
-    >>> am = abcFormat.ABCMetadata('M: (3+2)/4')
-    >>> am.signature
-
-    >>> am = abcFormat.ABCMetadata('M: C')
-    >>> am.signature
-    3/4+2/4
+    >>> am = abcFormat.ABCMeter('M: 2/4')
+    >>> am.getTimeSignatureObject()
+    <music21.meter.TimeSignature 2/4>
+    >>> am.ratio
+    0.5
+    >>> am.defaultQuarterLength
+    0.5
     '''
 
     TOKEN_REGEX = r'^M:.*$|\[M:[^\]\n%]*\]'
@@ -945,15 +942,17 @@ class ABCMeter(ABCMetadata):
         self.symbol: Optional[str] = None
         self.numerators : List[int] = []
         self.denominator : Optional[int] = None
+        self.ratio : Optional[float] = None
 
-        if self.data.lower() == 'none':
-            return
+        if not self.data or self.data.lower() == 'none':
+            # M: none is valid abc syntax but not a meter, omnit this token at all
+            raise ABCTokenException(f'No meter defined for ABCMeter "{self.src}"')
         elif self.data == 'C':
-            self.numerators = [4],
+            self.numerators = [4]
             self.denominator = 4
             self.symbol = 'common'
         elif self.data == 'C|':
-            self.numerators = [2],
+            self.numerators = [2]
             self.denominator = 2
             self.symbol = 'cut'
         else:
@@ -963,7 +962,7 @@ class ABCMeter(ABCMetadata):
             # FREI4/4
             if num:
                 self.numerators = [int(n) for n in
-                                    common.getNumFromStr(num,numbers='0123456789+')[0].split('+')]
+                                    common.getNumFromStr(num, numbers='0123456789+')[0].split('+')]
             else:
                 # If the numerator is empty we assume it is '1'
                 self.numerators = [1]
@@ -975,62 +974,58 @@ class ABCMeter(ABCMetadata):
                 # set the denumerator to 1
                 self.denominator = 1
 
-    def __float__(self):
-        return sum(self.numerators) / self.denominator
+        self.ratio = sum(self.numerators) / self.denominator
 
     def getTimeSignatureObject(self) -> Optional['music21.meter.TimeSignature']:
         '''
         Return a music21 :class:`~music21.meter.TimeSignature`
         object for this metadata tag, if isMeter is True, otherwise raise exception.
 
-        >>> am = abcFormat.ABCMetadata('M:2/2')
+        >>> am = abcFormat.ABCMeter('M:2/2')
         >>> am.getTimeSignatureObject()
         <music21.meter.TimeSignature 2/2>
 
-        >>> am = abcFormat.ABCMetadata('M:C|')
+        >>> am = abcFormat.ABCMeter('M:C|')
         >>> am.getTimeSignatureObject()
         <music21.meter.TimeSignature 2/2>
 
-        >>> am = abcFormat.ABCMetadata('M:1+2/2')
+        >>> am = abcFormat.ABCMeter('M:1+2/2')
         >>> am.getTimeSignatureObject()
         <music21.meter.TimeSignature 1/2+2/2>
 
-        >>> am = abcFormat.ABCMetadata('M:(2+2+2)/6')
+        >>> am = abcFormat.ABCMeter('M:(2+2+2)/6')
         >>> am.getTimeSignatureObject()
         <music21.meter.TimeSignature 2/6+2/6+2/6>
         '''
-        if self.numerators and self.denominator is not None:
-            s = "+".join(f'{n}/{self.denominator}' for n in self.numerators)
-            try:
-                ts = meter.TimeSignature(s)
-            except music21.exceptions21.Music21Exception:
-                raise ABCTokenException(f'Creating timesignature for "{s}" failed. ({self})')
-            ts.symbol = self.symbol
-            return ts
-        else:
-            return None
+        s = "+".join(f'{n}/{self.denominator}' for n in self.numerators)
+        try:
+            ts = meter.TimeSignature(s)
+        except music21.exceptions21.Music21Exception:
+            raise ABCTokenException(f'Creating timesignature for "{s}" failed. ({self})')
+        ts.symbol = self.symbol
+        return ts
 
-
-    def getDefaultQuarterLength(self) -> float:
+    @property
+    def defaultQuarterLength(self) -> float:
         r'''
         If there is a quarter length representation available,
         return it as a floating point value
         If taking from meter, find the "fraction" and if < 0.75 use sixteenth notes.
         If >= 0.75 use eighth notes.
 
-        >>> am = abcFormat.ABCMetadata('M:C|')
+        >>> am = abcFormat.ABCMeter('M:C|')
         >>> am.getDefaultQuarterLength()
         0.5
 
-        >>> am = abcFormat.ABCMetadata('M:2/4')
+        >>> am = abcFormat.ABCMeter('M:2/4')
         >>> am.getDefaultQuarterLength()
         0.25
 
-        >>> am = abcFormat.ABCMetadata('M:3/4')
+        >>> am = abcFormat.ABCMeter('M:3/4')
         >>> am.getDefaultQuarterLength()
         0.5
 
-        >>> am = abcFormat.ABCMetadata('M:6/8')
+        >>> am = abcFormat.ABCMeter('M:6/8')
         >>> am.getDefaultQuarterLength()
         0.5
         '''
@@ -1039,7 +1034,7 @@ class ABCMeter(ABCMetadata):
             return 0.5  # TODO: assume default, need to configure
 
         # less than 0.75 the default is a sixteenth note
-        return 0.25 if float(self) < 0.75 else 0.5
+        return 0.25 if self.ratio < 0.75 else 0.5
 
 
 RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
@@ -2233,49 +2228,25 @@ TOKEN_RE = re.compile(r'|'.join(f'(?P<{group}>{spec[0]})'
                                 for group, spec in TOKEN_SPEC.items()), flags=re.MULTILINE)
 
 
-# ------------------------------------------------------------------------------
-class ABCHandler:
+class ABCHandler():
     '''
-    An ABCHandler is able to divide elements of a character stream into objects and handle
-    store in a list, and passes global information to components
+       An ABCHandler is able to divide elements of a character stream into objects and handle
+       store in a list, and passes global information to components
 
-    Optionally, specify the (major, minor, patch) version of ABC to process--
-    e.g., (1.2.0). If not set, default ABC 1.3 parsing is performed.
+       Optionally, specify the (major, minor, patch) version of ABC to process--
+       e.g., (1.2.0). If not set, default ABC 1.3 parsing is performed.
 
-    If lineBreaksDefinePhrases is True then new lines within music elements
-    define new phrases.  This is useful for parsing extra information from
-    the Essen Folksong repertory
+       If lineBreaksDefinePhrases is True then new lines within music elements
+       define new phrases.  This is useful for parsing extra information from
+       the Essen Folksong repertory
 
-    New in v6.2 -- lineBreaksDefinePhrases -- does not yet do anything
-    '''
+       New in v6.2 -- lineBreaksDefinePhrases -- does not yet do anything
+       '''
 
-    def __init__(self, tokens: Optional[List[ABCToken]] = None, abcVersion: Optional[ABCVersion] = None,
-                 lineBreaksDefinePhrases: bool = False):
-
+    def __init__(self, tokens: Optional[List[ABCToken]] = None, abcVersion: Optional[ABCVersion] = None):
         # tokens are ABC objects import n a linear stream
         self._abcVersion: Optional[ABCVersion] = abcVersion
-        self.abcDirectives: Dict[str, str] = {}
-        self.userDefined: Dict[str, List[ABCToken]] = {}
-        self.tokens = [] if tokens is None else tokens
-        self.activeSpanner = []
-        self.lastKeySignature = None
-        self.lastDefaultQL: Optional[float] = None
-        self.carriedAccidentals: Dict[str, str] = {}
-        self.lineBreaksDefinePhrases: bool = lineBreaksDefinePhrases
-        self.strSrc: str = ''
-        self.srcLen = len(self.strSrc)  # just documenting this.
-        self.lastTimeSignatureObj = None  # an m21 object
-        self.lastTupletToken = None  # a token obj; keeps count of usage
-        self.lastTieToken = None
-        self.lastGraceToken = None
-        self.lastNoteToken = None
-        self.lastArticulations = []
-        self.lastExpressions = []
-        self.lastBrokenRhythm = None
-        self.accidental_propagation = self._accidentalPropagation()
-        self.lyrics = None
-        # On this Note, starts the last known lyric line(s)
-        self.lastLyricNote: ABCGeneralNote = None
+        self.tokens: List[ABCToken] = [] if tokens is None else tokens
 
     @property
     def abcVersion(self):
@@ -2284,101 +2255,6 @@ class ABCHandler:
     @abcVersion.setter
     def abcVersion(self, abcVersion: ABCVersion):
         self._abcVersion = abcVersion
-        # accidential propagation depends on the abcVersion
-        self.accidental_propagation = self._accidentalPropagation()
-
-    @classmethod
-    def parseABCVersion(cls, src: str) -> Optional[ABCVersion]:
-        '''
-        Every abc file conforming to the standard should start with the line
-        %abc-2.1
-
-        >>> abcFormat.ABCHandler.parseABCVersion('%abc-2.3.2')
-        (2, 3, 2)
-
-        Catch only abc version as first comment line
-        >>> abcFormat.ABCHandler.parseABCVersion('%first comment\\n%abc-2.3.2')
-
-        But ignore post comments
-        >>> abcFormat.ABCHandler.parseABCVersion('X:1 % reference number\\n%abc-2.3.2')
-        (2, 3, 2)
-        '''
-        verMats = RE_ABC_VERSION.match(src)
-        if verMats:
-            abcMajor = int(verMats.group(3))
-            abcMinor = int(verMats.group(4))
-            abcPatch = int(verMats.group(5)) if verMats.group(5) else 0
-            return (abcMajor, abcMinor, abcPatch)
-
-    def _accidentalPropagation(self) -> str:
-        '''
-        Determine how accidentals should 'carry through the measure.'
-
-        >>> ah = abcFormat.ABCHandler(abcVersion=(1, 3, 0))
-        >>> ah._accidentalPropagation()
-        'not'
-        >>> ah = abcFormat.ABCHandler(abcVersion=(2, 0, 0))
-        >>> ah._accidentalPropagation()
-        'pitch'
-        '''
-        minVersion = (2, 0, 0)
-        if not self.abcVersion or self.abcVersion < minVersion:
-            return 'not'
-
-        if 'PROPAGATE-ACCIDENTALS' in self.abcDirectives:
-            return self.abcDirectives['PROPAGATE-ACCIDENTALS']
-        return 'pitch'  # Default per abc 2.1 standard
-
-    @staticmethod
-    def startsMetadata(c: str, cNext: Optional[str], cNextNext: Optional[str]) -> bool:
-        '''
-        Returns True if this context describes the start of a metadata section, like
-
-        A:something
-
-        Metadata: capital letter, with next char as ':' and some following character
-
-        >>> ah = abcFormat.ABCHandler
-        >>> ah.startsMetadata('A', ':', 's')
-        True
-
-        lowercase w: is a special case for lyric defs
-
-        >>> ah.startsMetadata('w', ':', 's')
-        True
-
-        Following char must be ":"
-
-        >>> ah.startsMetadata('A', ' ', 's')
-        False
-
-        Pipe after colon indicates not metadata (bar info).
-        For example need to not misinterpret repeat bars as metadata
-        e.g. `dAG FED:|2 dAG FGA|`
-
-        this is incorrect, but we can avoid it by
-        looking for a leading pipe and returning False
-
-        >>> ah.startsMetadata('A', ':', '|')
-        False
-
-        >>> ah.startsMetadata('A', ':', None)
-        False
-        '''
-        if cNext != ':':
-            return False
-        elif cNextNext is None:
-            return False
-        elif cNextNext == '|':
-            return False
-        elif c == 'w':
-            return True  # special case, w:...
-        elif c.isalpha() and c.isupper():
-            return True
-        return False
-
-    # --------------------------------------------------------------------------
-    # token processing
 
     def tokenize(self, strSrc: str) -> List[ABCToken]:
         '''
@@ -2389,7 +2265,7 @@ class ABCHandler:
 
         >>> abch = abcFormat.ABCHandler()
         >>> abch.tokenize('X: 1')
-        [<music21.abcFormat.ABCMetadata 'X: 1'>]
+        [<music21.abcFormat.ABCReferenceNumber 'X: 1'>]
 
         >>> abch = abcFormat.ABCHandler()
         >>> abch.tokenize('(6f')
@@ -2439,6 +2315,407 @@ class ABCHandler:
                     [f'No token class for rule "{rule}" with matching regex "{regex}"'])
 
         return tokens
+
+    @classmethod
+    def parseABCVersion(cls, src: str) -> Optional[ABCVersion]:
+        '''
+        Every abc file conforming to the standard should start with the line
+        %abc-2.1
+
+        >>> abcFormat.ABCHandler.parseABCVersion('%abc-2.3.2')
+        (2, 3, 2)
+
+        Catch only abc version as first comment line
+        >>> abcFormat.ABCHandler.parseABCVersion('%first comment\\n%abc-2.3.2')
+
+        But ignore post comments
+        >>> abcFormat.ABCHandler.parseABCVersion('X:1 % reference number\\n%abc-2.3.2')
+        (2, 3, 2)
+        '''
+        verMats = RE_ABC_VERSION.match(src)
+        if verMats:
+            abcMajor = int(verMats.group(3))
+            abcMinor = int(verMats.group(4))
+            abcPatch = int(verMats.group(5)) if verMats.group(5) else 0
+            return (abcMajor, abcMinor, abcPatch)
+
+    def __len__(self):
+        return len(self.tokens)
+
+    def __add__(self, other):
+        '''
+        Return a new handler adding the tokens in both
+
+        Contrived example appending two separate keys.
+
+        Used in polyphonic metadata merge
+
+
+        >>> abcStr = 'M:6/8\\nL:1/8\\nK:G\\n'
+        >>> ah1 = abcFormat.ABCHandler()
+        >>> junk = ah1.process(abcStr)
+        >>> len(ah1)
+        3
+
+        >>> abcStr = 'M:3/4\\nL:1/4\\nK:D\\n'
+        >>> ah2 = abcFormat.ABCHandler()
+        >>> junk = ah2.process(abcStr)
+        >>> len(ah2)
+        3
+
+        >>> ah3 = ah1 + ah2
+        >>> len(ah3)
+        6
+        >>> ah3.tokens[0] == ah1.tokens[0]
+        True
+        >>> ah3.tokens[3] == ah2.tokens[0]
+        True
+
+        '''
+        ah = self.__class__()  # will get the same class type
+        ah.tokens = self.tokens + other.tokens
+        return ah
+
+    def splitByVoice(self) -> Tuple['ABCHandler', Dict[str, 'ABCProcessHandler']]:
+        r"""
+        Split the tokens of this ABCHandler into al seperat ABCProcessHandler for each voice.
+        Each voice handler got the all the common metadata token of the abc tune header
+
+        Also return an ABCHandler with all the common Metadata.
+
+        The abc header with the common metadata ends with the first 'K:' field or with the
+        first non metadata token (bad abc coding).
+
+        ABC directives are treated as metadata instructions.
+
+        We assume there is a voice with the id '1'.  All tokens in the body that
+        cannot be assigned to a voice are assigned to the voice '1'. This happens if no
+        voices are defined (monophonic tune) or because bad abc coding.
+
+        >>> abcStr = 'M:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||'
+        >>> ah = abcFormat.ABCHandler()
+        >>> ah.process(abcStr)
+        >>> tokenColls = ah.splitByVoice()
+        >>> tokenColls[0]
+        <music21.abcFormat.ABCHandler object at 0x...>
+        >>> [t.src for t in tokenColls[0].tokens]
+        ['M:6/8', 'L:1/8', 'K:G', 'B3', 'A3', '|', 'G6', '|', 'B3', 'A3', '|', 'G6', '||']
+
+        >>> abcStr = ('M:6/8\nL:1/8\nV: * clef=treble\nK:G\nV:1 name="Whistle" ' +
+        ...     'snm="wh"\nB3 A3 | G6 | B3 A3 | G6 ||\nV:2 name="violin" ' +
+        ...     'snm="v"\nBdB AcA | GAG D3 | BdB AcA | GAG D6 ||\nV:3 name="Bass" ' +
+        ...     'snm="b" clef=bass\nD3 D3 | D6 | D3 D3 | D6 ||')
+        >>> ah = abcFormat.ABCHandler()
+        >>> ah.process(abcStr)
+        >>> tokenColls = ah.splitByVoice()
+
+        >>> [t.src for t in tokenColls[0].tokens]
+        ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:1 name="Whistle" snm="wh"', 'B3', 'A3',
+        '|', 'G6', '|', 'B3', 'A3', '|', 'G6', '||']
+        >>> [t.src for t in tokenColls[1].tokens]
+        ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:2 name="violin" snm="v"', 'B', 'd', 'B', 'A',
+        'c', 'A', '|', 'G', 'A', 'G', 'D3', '|', 'B', 'd', 'B', 'A', 'c', 'A', '|', 'G', 'A', 'G', 'D6', '||']
+        >>> [t.src for t in tokenColls[2].tokens]
+        ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:3 name="Bass" snm="b" clef=bass',
+        'D3', 'D3', '|', 'D6', '|', 'D3', 'D3', '|', 'D6', '||']
+        """
+        active_voice = []
+        voices = {'1': active_voice}
+        tokenIter = iter(self.tokens)
+        voice_id = '1'
+
+        header = []
+        for token in tokenIter:
+            if isinstance(token, ABCMetadata):
+                header.append(token)
+                if isinstance(token, ABCKey):
+                    # Stop, regular end of the tune header
+                    break
+            else:
+                # Not a valid token in Header
+                # We asume the body starts here
+                # put the token back on top of the iterator
+                tokenIter = itertools.chain([token], tokenIter)
+                break
+        else:
+            # there are no body tokens, maybe this is an abc include file ?
+            return [self]
+
+        for token in tokenIter:
+            if isinstance(token, ABCVoice):
+                if token.id is None or token.id == '*':
+                    # error in abc code, the voice has no id or
+                    # is the 'every voice' id (illegal in body)
+                    # skip this token
+                    continue
+
+                # change the active voice
+                if token.id in voices:
+                    active_voice = voices[token.id]
+                else:
+                    active_voice = []
+                    voices[token.id] = active_voice
+
+            active_voice.append(token)
+
+        voice_handler = {}
+        # Create a new Handler for each voice with the header tokens first.
+        for voice_id, tokens in voices.items():
+            vh = ABCProcessHandler(tokens=tokens, abcVersion=self.abcVersion)
+            if vh.hasNotes():
+                voice_handler[voice_id] = vh
+
+        return ABCHandler(header, self.abcVersion), voice_handler
+
+    def definesReferenceNumbers(self):
+        '''
+        Return True if this token structure defines more than 1 reference number,
+        usually implying multiple pieces encoded in one file.
+
+
+        >>> abcStr = 'X:5\\nM:6/8\\nL:1/8\\nK:G\\nB3 A3 | G6 | B3 A3 | G6 ||'
+        >>> ah = abcFormat.ABCHandler()
+        >>> junk = ah.process(abcStr)
+        >>> ah.definesReferenceNumbers()  # only one returns False
+        False
+
+
+        >>> abcStr = 'X:5\\nM:6/8\\nL:1/8\\nK:G\\nB3 A3 | G6 | B3 A3 | G6 ||\\n'
+        >>> abcStr += 'X:6\\nM:6/8\\nL:1/8\\nK:G\\nB3 A3 | G6 | B3 A3 | G6 ||'
+        >>> ah = abcFormat.ABCHandler()
+        >>> junk = ah.process(abcStr)
+        >>> ah.definesReferenceNumbers()  # two tokens so returns True
+        True
+        '''
+        if not self.tokens:
+            raise ABCHandlerException('must process tokens before calling split')
+
+        count = 0
+        for t in self.tokens:
+            if isinstance(t, ABCReferenceNumber):
+                count += 1
+                if count == 2:
+                    return True
+
+        return False
+
+    def hasNotes(self) -> bool:
+        '''
+        If tokens are processed, return True if ABCNote or
+        ABCChord classes are defined
+
+
+        >>> abcStr = 'M:6/8\\nL:1/8\\nK:G\\n'
+        >>> ah1 = abcFormat.ABCHandler()
+        >>> junk = ah1.process(abcStr)
+        >>> ah1.hasNotes()
+        False
+
+        >>> abcStr = 'M:6/8\\nL:1/8\\nK:G\\nc1D2'
+        >>> ah2 = abcFormat.ABCHandler()
+        >>> junk = ah2.process(abcStr)
+        >>> ah2.hasNotes()
+        True
+        '''
+        if not self.tokens:
+            raise ABCHandlerException('must process tokens before calling')
+
+        return any(isinstance(t, ABCGeneralNote) for t in self.tokens)
+
+    def splitByReferenceNumber(self) -> Dict[int, 'ABCHandler']:
+        # noinspection PyShadowingNames
+        r'''
+        Split tokens by reference numbers.
+
+        Returns a dictionary of ABCHandler instances, where the reference number
+        is used to access the music. If no reference numbers are defined,
+        the tune is available under the dictionary entry None.
+
+        >>> abcStr = 'X:5\nM:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||\n'
+        >>> abcStr += 'X:6\nM:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||'
+        >>> ah = abcFormat.ABCHandler()
+        >>> junk = ah.process(abcStr)
+        >>> len(ah)
+        28
+        >>> ahDict = ah.splitByReferenceNumber()
+        >>> 5 in ahDict
+        True
+        >>> 6 in ahDict
+        True
+        >>> 7 in ahDict
+        False
+
+        Each entry is its own ABCHandler object.
+
+        >>> ahDict[5]
+        <music21.abcFormat.ABCHandler object at 0x10b0cf5f8>
+        >>> len(ahDict[5].tokens)
+        14
+
+        Header information (except for comments) should be appended to all pieces.
+
+        >>> abcStrWHeader = '%abc-2.1\nO: Irish\n' + abcStr
+        >>> ah = abcFormat.ABCHandler()
+        >>> junk = ah.process(abcStrWHeader)
+        >>> len(ah)
+        29
+        >>> ahDict = ah.splitByReferenceNumber()
+        >>> 5 in ahDict
+        True
+        >>> 6 in ahDict
+        True
+        >>> 7 in ahDict
+        False
+
+        Did we get the origin header in each score?
+
+        >>> ahDict[5].tokens[0]
+        <music21.abcFormat.ABCMetadata 'O: Irish'>
+        >>> ahDict[6].tokens[0]
+        <music21.abcFormat.ABCMetadata 'O: Irish'>
+        '''
+        if not self.tokens:
+            raise ABCHandlerException('must process tokens before calling split')
+
+        ahDict = {}
+
+        # tokens in this list are prepended to all tunes:
+        prependToAllList = []
+        activeTokens = []
+        currentABCHandler = None
+
+        for t in self.tokens:
+            if isinstance(t, ABCReferenceNumber):
+                if currentABCHandler is not None:
+                    currentABCHandler.tokens = activeTokens
+                    activeTokens = []
+                currentABCHandler = ABCHandler(abcVersion=self.abcVersion)
+                referenceNumber = int(t.data)
+                ahDict[referenceNumber] = currentABCHandler
+
+            if currentABCHandler is None:
+                prependToAllList.append(t)
+            else:
+                activeTokens.append(t)
+
+        if currentABCHandler is not None:
+            currentABCHandler.tokens = activeTokens
+
+        if not ahDict:
+            ahDict[None] = ABCHandler()
+
+        for thisABCHandler in ahDict.values():
+            thisABCHandler.tokens = prependToAllList[:] + thisABCHandler.tokens
+
+        return ahDict
+
+
+class ABCHandlerBar(ABCHandler):
+    '''
+    A Handler specialized for storing bars. All left
+    and right bars are collected and assigned to attributes.
+    '''
+
+    # divide elements of a character stream into objects and handle
+    # store in a list, and pass global information to components
+
+    def __init__(self, tokens: Optional[List[ABCToken]] = None,
+                 left: Optional[ABCBar] = None,
+                 rigth: Optional[ABCBar] = None):
+
+        # tokens are ABC objects in a linear stream
+        super().__init__()
+        if tokens is not None:
+            self.tokens = tokens
+        self.leftBarToken: Optional[ABCBar] = left
+        self.rightBarToken: Optional[ABCBar] = rigth
+
+    def __add__(self, other):
+        ah = self.__class__()  # will get the same class type
+        ah.tokens = self.tokens + other.tokens
+        # get defined tokens
+        for barAttr in ('leftBarToken', 'rightBarToken'):
+            bOld = getattr(self, barAttr)
+            bNew = getattr(other, barAttr)
+            if bNew is None and bOld is None:
+                pass  # nothing to do
+            elif bNew is not None and bOld is None:  # get new
+                setattr(ah, barAttr, bNew)
+            elif bNew is None and bOld is not None:  # get old
+                setattr(ah, barAttr, bOld)
+            else:
+                # if both ar the same, assign one
+                if bOld.src == bNew.src:
+                    setattr(ah, barAttr, bNew)
+                else:
+                    # might resolve this by ignoring standard bars and favoring
+                    # repeats or styled bars
+                    environLocal.printDebug(['cannot handle two non-None bars yet: got bNew, bOld',
+                                             bNew, bOld])
+                    # raise ABCHandlerException('cannot handle two non-None bars yet')
+                    setattr(ah, barAttr, bNew)
+
+        return ah
+
+
+class ABCProcessHandler(ABCHandler):
+    '''
+    An ABCHandler for tokens of a an abc voice.
+
+    is able to divide elements of a character stream into objects and handle
+    store in a list, and passes global information to components
+
+    Optionally, specify the (major, minor, patch) version of ABC to process--
+    e.g., (1.2.0). If not set, default ABC 1.3 parsing is performed.
+
+    If lineBreaksDefinePhrases is True then new lines within music elements
+    define new phrases.  This is useful for parsing extra information from
+    the Essen Folksong repertory
+
+    New in v6.2 -- lineBreaksDefinePhrases -- does not yet do anything
+    '''
+
+    def __init__(self, tokens: Optional[List[ABCToken]] = None, abcVersion: Optional[ABCVersion] = None):
+
+        self.abcDirectives: Dict[str, str] = {}
+        self.userDefined: Dict[str, List[ABCToken]] = {}
+        self.activeSpanner = []
+        self.lastKeySignature = None
+        self.lastDefaultQL: Optional[float] = None
+        self.carriedAccidentals: Dict[str, str] = {}
+        self.strSrc: str = ''
+        self.srcLen = len(self.strSrc)  # just documenting this.
+        self.lastTimeSignatureObj = None  # an m21 object
+        self.lastTupletToken = None  # a token obj; keeps count of usage
+        self.lastTieToken = None
+        self.lastGraceToken = None
+        self.lastNoteToken = None
+        self.lastArticulations = []
+        self.lastExpressions = []
+        self.lastBrokenRhythm = None
+        self.accidental_propagation = self._accidentalPropagation()
+        self.lyrics = None
+        # On this Note, starts the last known lyric line(s)
+        self.lastLyricNote: ABCGeneralNote = None
+
+    def _accidentalPropagation(self) -> str:
+        '''
+        Determine how accidentals should 'carry through the measure.'
+
+        >>> ah = abcFormat.ABCHandler(abcVersion=(1, 3, 0))
+        >>> ah._accidentalPropagation()
+        'not'
+        >>> ah = abcFormat.ABCHandler(abcVersion=(2, 0, 0))
+        >>> ah._accidentalPropagation()
+        'pitch'
+        '''
+        minVersion = (2, 0, 0)
+        if not self.abcVersion or self.abcVersion < minVersion:
+            return 'not'
+
+        if 'PROPAGATE-ACCIDENTALS' in self.abcDirectives:
+            return self.abcDirectives['PROPAGATE-ACCIDENTALS']
+        return 'pitch'  # Default per abc 2.1 standard
 
     def process_ABCArticulation(self, token: ABCArticulation):
         """
@@ -2541,13 +2818,13 @@ class ABCHandler:
     def process_ABCMeter(self, token: ABCMeter):
         self.lastTimeSignatureObj = token.getTimeSignatureObject()
         if self.lastDefaultQL is None:
-            self.lastDefaultQL = token.getDefaultQuarterLength()
+            self.lastDefaultQL = token.defaultQuarterLength
 
     def process_ABCKey(self, token: ABCKey):
         self.lastKeySignature = token.getKeySignatureObject()
 
-    def process_ABCReferenceNumber(self, token: ABCReferenceNumber):
-        self.activeSpanner = []
+    def process_ABCUnitNoteLength(self, token: ABCUnitNoteLength):
+        self.lastDefaultQL = token.defaultQuarterLength
 
     def process_ABCVoice(self, token: ABCVoice):
         self.lastLyricNote = None
@@ -2555,10 +2832,10 @@ class ABCHandler:
     def process_ABCInstruction(self, token: ABCInstruction):
         if token.key:
             self.abcDirectives[token.key] = token.data
-            if k == 'propagate-accidentals':
+            if token.key == 'propagate-accidentals':
                 self.accidental_propagation = self._accidentalPropagation()
 
-    def process_isUserDefined(self, token: ABCUserDefined):
+    def process_UserDefinition(self, token: ABCUserDefinition):
         try:
             definition = token.tokenize()
             if definition is None and token.symbol in self.userDefined:
@@ -2619,6 +2896,16 @@ class ABCHandler:
         self.lastTupletToken = token
         return token
 
+    def process(self, strSrc: str) -> None:
+        if self.abcVersion is None:
+            self.abcVersion = self.parseABCVersion(src=strSrc)
+
+        self.metadataObject = metadata.Metadata()
+        self.strSrc = strSrc
+        self.tokens = self.tokenize(strSrc)
+        self.tokenProcess()
+        # return list of tokens; stored internally
+
     def tokenProcess(self):
         '''
         Process all token objects any supply contextual informations.
@@ -2674,198 +2961,6 @@ class ABCHandler:
                 self.tokens = tokens
                 break
 
-    def process(self, strSrc: str) -> None:
-        if self.abcVersion is None:
-            self.abcVersion = self.parseABCVersion(src=strSrc)
-
-        self.strSrc = strSrc
-        self.tokens = self.tokenize(strSrc)
-        self.tokenProcess()
-        # return list of tokens; stored internally
-
-    # --------------------------------------------------------------------------
-    # access tokens
-
-    def __len__(self):
-        return len(self.tokens)
-
-    def __add__(self, other):
-        '''
-        Return a new handler adding the tokens in both
-
-        Contrived example appending two separate keys.
-
-        Used in polyphonic metadata merge
-
-
-        >>> abcStr = 'M:6/8\\nL:1/8\\nK:G\\n'
-        >>> ah1 = abcFormat.ABCHandler()
-        >>> junk = ah1.process(abcStr)
-        >>> len(ah1)
-        3
-
-        >>> abcStr = 'M:3/4\\nL:1/4\\nK:D\\n'
-        >>> ah2 = abcFormat.ABCHandler()
-        >>> junk = ah2.process(abcStr)
-        >>> len(ah2)
-        3
-
-        >>> ah3 = ah1 + ah2
-        >>> len(ah3)
-        6
-        >>> ah3.tokens[0] == ah1.tokens[0]
-        True
-        >>> ah3.tokens[3] == ah2.tokens[0]
-        True
-
-        '''
-        ah = self.__class__()  # will get the same class type
-        ah.tokens = self.tokens + other.tokens
-        return ah
-
-    # --------------------------------------------------------------------------
-    # utility methods for post processing
-
-    def definesReferenceNumbers(self):
-        '''
-        Return True if this token structure defines more than 1 reference number,
-        usually implying multiple pieces encoded in one file.
-
-
-        >>> abcStr = 'X:5\\nM:6/8\\nL:1/8\\nK:G\\nB3 A3 | G6 | B3 A3 | G6 ||'
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStr)
-        >>> ah.definesReferenceNumbers()  # only one returns False
-        False
-
-
-        >>> abcStr = 'X:5\\nM:6/8\\nL:1/8\\nK:G\\nB3 A3 | G6 | B3 A3 | G6 ||\\n'
-        >>> abcStr += 'X:6\\nM:6/8\\nL:1/8\\nK:G\\nB3 A3 | G6 | B3 A3 | G6 ||'
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStr)
-        >>> ah.definesReferenceNumbers()  # two tokens so returns True
-        True
-        '''
-        if not self.tokens:
-            raise ABCHandlerException('must process tokens before calling split')
-
-        count = 0
-        for t in self.tokens:
-            if isinstance(t, ABCMetadata) and t.isReferenceNumber():
-                count += 1
-                if count == 2:
-                    return True
-
-        return False
-
-    def splitByReferenceNumber(self) -> Dict[int, 'ABCHandler']:
-        # noinspection PyShadowingNames
-        r'''
-        Split tokens by reference numbers.
-
-        Returns a dictionary of ABCHandler instances, where the reference number
-        is used to access the music. If no reference numbers are defined,
-        the tune is available under the dictionary entry None.
-
-        >>> abcStr = 'X:5\nM:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||\n'
-        >>> abcStr += 'X:6\nM:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||'
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStr)
-        >>> len(ah)
-        28
-        >>> ahDict = ah.splitByReferenceNumber()
-        >>> 5 in ahDict
-        True
-        >>> 6 in ahDict
-        True
-        >>> 7 in ahDict
-        False
-
-        Each entry is its own ABCHandler object.
-
-        >>> ahDict[5]
-        <music21.abcFormat.ABCHandler object at 0x10b0cf5f8>
-        >>> len(ahDict[5].tokens)
-        14
-
-        Header information (except for comments) should be appended to all pieces.
-
-        >>> abcStrWHeader = '%abc-2.1\nO: Irish\n' + abcStr
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStrWHeader)
-        >>> len(ah)
-        29
-        >>> ahDict = ah.splitByReferenceNumber()
-        >>> 5 in ahDict
-        True
-        >>> 6 in ahDict
-        True
-        >>> 7 in ahDict
-        False
-
-        Did we get the origin header in each score?
-
-        >>> ahDict[5].tokens[0]
-        <music21.abcFormat.ABCMetadata 'O: Irish'>
-        >>> ahDict[6].tokens[0]
-        <music21.abcFormat.ABCMetadata 'O: Irish'>
-        '''
-        if not self.tokens:
-            raise ABCHandlerException('must process tokens before calling split')
-
-        ahDict = {}
-
-        # tokens in this list are prepended to all tunes:
-        prependToAllList = []
-        activeTokens = []
-        currentABCHandler = None
-
-        for t in self.tokens:
-            if isinstance(t, ABCReferenceNumber):
-                if currentABCHandler is not None:
-                    currentABCHandler.tokens = activeTokens
-                    activeTokens = []
-                currentABCHandler = ABCHandler(abcVersion=self.abcVersion)
-                referenceNumber = int(t.data)
-                ahDict[referenceNumber] = currentABCHandler
-
-            if currentABCHandler is None:
-                prependToAllList.append(t)
-            else:
-                activeTokens.append(t)
-
-        if currentABCHandler is not None:
-            currentABCHandler.tokens = activeTokens
-
-        if not ahDict:
-            ahDict[None] = ABCHandler()
-
-        for thisABCHandler in ahDict.values():
-            thisABCHandler.tokens = prependToAllList[:] + thisABCHandler.tokens
-
-        return ahDict
-
-    def getReferenceNumber(self):
-        r'''
-        If tokens are processed, get the first
-        reference number defined.
-
-
-        >>> abcStr = 'X:5\nM:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||'
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStr)
-        >>> ah.getReferenceNumber()
-        '5'
-        '''
-        if not self.tokens:
-            raise ABCHandlerException('must process tokens before calling split')
-
-        for t in self.tokens:
-            if isinstance(t, ABCMetadata) and t.isReferenceNumber():
-                return t.data
-
-        return None
-
     def definesMeasures(self):
         r'''
         Returns True if this token structure defines Measures in a normal Measure form.
@@ -2901,96 +2996,6 @@ class ABCHandler:
                     return True
         return False
 
-    def splitByVoice(self) -> List['ABCHandler']:
-        r"""
-        Split the tokens of this ABCHandler into seperat ABCHandler for each voice.
-        Each voice handler got the all the common metadata token of the abc tune header
-
-        The abc header with the common metadata ends with the first 'K:' field or with the
-        first non metadata token (bad abc coding).
-
-        ABC directives are treated as metadata instructions.
-
-        We assume there is a voice with the id '1'.  All tokens in the body that
-        cannot be assigned to a voice are assigned to the voice '1'. This happens if no
-        voices are defined (monophonic tune) or because bad abc coding.
-
-        >>> abcStr = 'M:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||'
-        >>> ah = abcFormat.ABCHandler()
-        >>> ah.process(abcStr)
-        >>> tokenColls = ah.splitByVoice()
-        >>> tokenColls[0]
-        <music21.abcFormat.ABCHandler object at 0x...>
-        >>> [t.src for t in tokenColls[0].tokens]
-        ['M:6/8', 'L:1/8', 'K:G', 'B3', 'A3', '|', 'G6', '|', 'B3', 'A3', '|', 'G6', '||']
-
-        >>> abcStr = ('M:6/8\nL:1/8\nV: * clef=treble\nK:G\nV:1 name="Whistle" ' +
-        ...     'snm="wh"\nB3 A3 | G6 | B3 A3 | G6 ||\nV:2 name="violin" ' +
-        ...     'snm="v"\nBdB AcA | GAG D3 | BdB AcA | GAG D6 ||\nV:3 name="Bass" ' +
-        ...     'snm="b" clef=bass\nD3 D3 | D6 | D3 D3 | D6 ||')
-        >>> ah = abcFormat.ABCHandler()
-        >>> ah.process(abcStr)
-        >>> tokenColls = ah.splitByVoice()
-
-        >>> [t.src for t in tokenColls[0].tokens]
-        ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:1 name="Whistle" snm="wh"', 'B3', 'A3',
-        '|', 'G6', '|', 'B3', 'A3', '|', 'G6', '||']
-        >>> [t.src for t in tokenColls[1].tokens]
-        ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:2 name="violin" snm="v"', 'B', 'd', 'B', 'A',
-        'c', 'A', '|', 'G', 'A', 'G', 'D3', '|', 'B', 'd', 'B', 'A', 'c', 'A', '|', 'G', 'A', 'G', 'D6', '||']
-        >>> [t.src for t in tokenColls[2].tokens]
-        ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:3 name="Bass" snm="b" clef=bass',
-        'D3', 'D3', '|', 'D6', '|', 'D3', 'D3', '|', 'D6', '||']
-        """
-        active_voice = []
-        voices = {'1': active_voice}
-        tokenIter = iter(self.tokens)
-        voice_id = '1'
-
-        header = []
-        for token in tokenIter:
-            if isinstance(token, ABCMetadata):
-                header.append(token)
-                if token.isKey():
-                    # Stop, regular end of the tune header
-                    break
-            else:
-                # Not a valid token in Header
-                # We asume the body starts here
-                # put the token back on top of the iterator
-                tokenIter = itertools.chain([token], tokenIter)
-                break
-        else:
-            # there are no body tokens, maybe this is an abc include file ?
-            return [self]
-
-        for token in tokenIter:
-            if isinstance(token, ABCMetadata) and token.isVoice():
-                voice_id = token.getVoiceData()['id']
-                if voice_id is None or voice_id == '*':
-                    # error in abc code, the voice has no id or
-                    # is the 'every voice' id (illegal in body)
-                    # skip this token
-                    continue
-
-                # change the active voice
-                if voice_id in voices:
-                    active_voice = voices[voice_id]
-                else:
-                    active_voice = []
-                    voices[voice_id] = active_voice
-
-            active_voice.append(token)
-
-        voice_handler = []
-        # Create a new Handler for each voice with the header tokens first.
-        for voice_id, tokens in voices.items():
-            vh = ABCHandler(tokens=header + tokens, abcVersion=self.abcVersion)
-            if vh.hasNotes():
-                voice_handler.append(vh)
-
-        return voice_handler
-
     def splitByMeasure(self) -> List['ABCHandlerBar']:
         r'''
         Divide a token list by Measures, also
@@ -3002,13 +3007,13 @@ class ABCHandler:
         Returns a list of ABCHandlerBar instances.
         The first usually defines only Metadata
         >>> ah = abcFormat.ABCHandler()
-        >>> ah.process('L:1/4\nK:C\nCG CG| FC FC | bACB')
+        >>> ah.process('L:1/2\nK:C\nCG | FA | Cb')
         >>> mhl = ah.splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
-        [<music21.abcFormat.ABCMetadata 'L:1/4'>, <music21.abcFormat.ABCMetadata 'K:C'>]
-        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
-        [<music21.abcFormat.ABCNote 'F'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'F'>, <music21.abcFormat.ABCNote 'C'>]
-        [<music21.abcFormat.ABCNote 'b'>, <music21.abcFormat.ABCNote 'A'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'B'>]
+        [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>]
+        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
+        [<music21.abcFormat.ABCNote 'F'>, <music21.abcFormat.ABCNote 'A'>]
+        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'b'>]
         >>> for mh in mhl: print (mh.leftBarToken, mh.rightBarToken)
         None None
         None <music21.abcFormat.ABCBar '|'>
@@ -3016,44 +3021,44 @@ class ABCHandler:
         <music21.abcFormat.ABCBar '|'> None
 
         >>> ah = abcFormat.ABCHandler()
-        >>> ah.process('X:1\nL:1/4\nK:C\n|CG CG|]')
+        >>> ah.process('X:1\nL:1/2\n| CG |]')
         >>> mhl = ah.splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
-        [<music21.abcFormat.ABCMetadata 'X:1'>, <music21.abcFormat.ABCMetadata 'L:1/4'>, <music21.abcFormat.ABCMetadata 'K:C'>]
-        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
+        [<music21.abcFormat.ABCReferenceNumber 'X:1'>, <music21.abcFormat.ABCUnitNoteLength 'L:1/2'>]
+        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
         >>> for mh in mhl: print (mh.leftBarToken, mh.rightBarToken)
         None <music21.abcFormat.ABCBar '|'>
         <music21.abcFormat.ABCBar '|'> <music21.abcFormat.ABCBar '|]'>
 
         >>> ah = abcFormat.ABCHandler()
-        >>> ah.process('L:1/4\nK:C\n||CG CG||||')
+        >>> ah.process('L:1/2\nK:C\n||CG ||||')
         >>> mhl = ah.splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
-        [<music21.abcFormat.ABCMetadata 'L:1/4'>, <music21.abcFormat.ABCMetadata 'K:C'>]
-        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
+        [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>]
+        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
         >>> for mh in mhl: print (mh.leftBarToken, mh.rightBarToken)
         None <music21.abcFormat.ABCBar '||'>
         <music21.abcFormat.ABCBar '||'> <music21.abcFormat.ABCBar '||'>
 
         >>> ah = abcFormat.ABCHandler()
-        >>> ah.process('L:1/4\nK:C\n|CG CG|')
+        >>> ah.process('L:1/2\nK:C\n|CG|')
         >>> mhl = ah.splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
-        [<music21.abcFormat.ABCMetadata 'L:1/4'>, <music21.abcFormat.ABCMetadata 'K:C'>]
-        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
+        [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>]
+        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
         >>> for mh in mhl: print (mh.leftBarToken, mh.rightBarToken)
         None <music21.abcFormat.ABCBar '|'>
         <music21.abcFormat.ABCBar '|'> <music21.abcFormat.ABCBar '|'>
 
         >>> ah = abcFormat.ABCHandler()
-        >>> ah.process('L:1/4\nK:C\nCG CG| FC FC | bACB\nK:G\n CEG')
+        >>> ah.process('L:1/2\nK:C\nCG | FC | CB\nK:G\n FA')
         >>> mhl = ah.splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
-        [<music21.abcFormat.ABCMetadata 'L:1/4'>, <music21.abcFormat.ABCMetadata 'K:C'>]
-        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
-        [<music21.abcFormat.ABCNote 'F'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'F'>, <music21.abcFormat.ABCNote 'C'>]
-        [<music21.abcFormat.ABCNote 'b'>, <music21.abcFormat.ABCNote 'A'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'B'>, <music21.abcFormat.ABCMetadata 'K:G'>]
-        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'E'>, <music21.abcFormat.ABCNote 'G'>]
+        [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>]
+        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
+        [<music21.abcFormat.ABCNote 'F'>, <music21.abcFormat.ABCNote 'C'>]
+        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'B'>, <music21.abcFormat.ABCKey 'K:G'>]
+        [<music21.abcFormat.ABCNote 'F'>, <music21.abcFormat.ABCNote 'A'>]
         >>> for mh in mhl: print (mh.leftBarToken, mh.rightBarToken)
         None None
         None <music21.abcFormat.ABCBar '|'>
@@ -3062,24 +3067,13 @@ class ABCHandler:
         None None
 
         >>> ah = abcFormat.ABCHandler()
-        >>> ah.process('L:1/4\nK:C\n|CG CG|')
-        >>> mhl = ah.splitByMeasure()
-        >>> for mh in mhl: print (mh.tokens)
-        [<music21.abcFormat.ABCMetadata 'L:1/4'>, <music21.abcFormat.ABCMetadata 'K:C'>]
-        [<music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>, <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
-        >>> for mh in mhl: print (mh.leftBarToken, mh.rightBarToken)
-        None <music21.abcFormat.ABCBar '|'>
-        <music21.abcFormat.ABCBar '|'> <music21.abcFormat.ABCBar '|'>
-
-        >>> ah = abcFormat.ABCHandler()
-        >>> ah.process('L:1/4\nK:C\nCG CG||CG CG||')
+        >>> ah.process('L:1/2\nK:C\nCG ||FA||')
         >>> mhl = ah.splitByMeasure()
         >>> for mh in mhl: print (mh.leftBarToken, mh.rightBarToken)
         None None
         None <music21.abcFormat.ABCBar '||'>
         <music21.abcFormat.ABCBar '||'> <music21.abcFormat.ABCBar '||'>
         '''
-
         from itertools import zip_longest
         def split_tokens():
             tokens = []
@@ -3121,91 +3115,6 @@ class ABCHandler:
             last = e
 
         return result
-
-    def hasNotes(self) -> bool:
-        '''
-        If tokens are processed, return True if ABCNote or
-        ABCChord classes are defined
-
-
-        >>> abcStr = 'M:6/8\\nL:1/8\\nK:G\\n'
-        >>> ah1 = abcFormat.ABCHandler()
-        >>> junk = ah1.process(abcStr)
-        >>> ah1.hasNotes()
-        False
-
-        >>> abcStr = 'M:6/8\\nL:1/8\\nK:G\\nc1D2'
-        >>> ah2 = abcFormat.ABCHandler()
-        >>> junk = ah2.process(abcStr)
-        >>> ah2.hasNotes()
-        True
-        '''
-        if not self.tokens:
-            raise ABCHandlerException('must process tokens before calling')
-
-        return any(isinstance(t, ABCGeneralNote) for t in self.tokens)
-
-    def getTitle(self) -> Optional[str]:
-        '''
-        Get the first title tag. Used for testing.
-
-        Requires tokens to have been processed.
-        '''
-        if not self.tokens:
-            raise ABCHandlerException('must process tokens before calling split')
-        for t in self.tokens:
-            if isinstance(t, ABCMetadata):
-                if t.isTitle():
-                    return t.data
-        return None
-
-
-class ABCHandlerBar(ABCHandler):
-    '''
-    A Handler specialized for storing bars. All left
-    and right bars are collected and assigned to attributes.
-    '''
-
-    # divide elements of a character stream into objects and handle
-    # store in a list, and pass global information to components
-
-    def __init__(self, tokens: Optional[List[ABCToken]] = None,
-                 left: Optional[ABCBar] = None,
-                 rigth: Optional[ABCBar] = None):
-
-        # tokens are ABC objects in a linear stream
-        super().__init__()
-        if tokens is not None:
-            self.tokens = tokens
-        self.leftBarToken: Optional[ABCBar] = left
-        self.rightBarToken: Optional[ABCBar] = rigth
-
-    def __add__(self, other):
-        ah = self.__class__()  # will get the same class type
-        ah.tokens = self.tokens + other.tokens
-        # get defined tokens
-        for barAttr in ('leftBarToken', 'rightBarToken'):
-            bOld = getattr(self, barAttr)
-            bNew = getattr(other, barAttr)
-            if bNew is None and bOld is None:
-                pass  # nothing to do
-            elif bNew is not None and bOld is None:  # get new
-                setattr(ah, barAttr, bNew)
-            elif bNew is None and bOld is not None:  # get old
-                setattr(ah, barAttr, bOld)
-            else:
-                # if both ar the same, assign one
-                if bOld.src == bNew.src:
-                    setattr(ah, barAttr, bNew)
-                else:
-                    # might resolve this by ignoring standard bars and favoring
-                    # repeats or styled bars
-                    environLocal.printDebug(['cannot handle two non-None bars yet: got bNew, bOld',
-                                             bNew, bOld])
-                    # raise ABCHandlerException('cannot handle two non-None bars yet')
-                    setattr(ah, barAttr, bNew)
-
-        return ah
 
 
 def mergeLeadingMetaData(barHandlers: List[ABCHandlerBar]) -> List[ABCHandlerBar]:
@@ -3738,12 +3647,12 @@ class Test(unittest.TestCase):
         ah.process(testFiles.accTest)
 
         # noinspection SpellCheckingInspection
-        tokensCorrect = '''<music21.abcFormat.ABCMetadata 'X: 979'>
-<music21.abcFormat.ABCMetadata 'T: Staccato test, plus accents and tenuto marks'>
-<music21.abcFormat.ABCMetadata 'M: 2/4'>
-<music21.abcFormat.ABCMetadata 'L: 1/16'>
-<music21.abcFormat.ABCMetadata 'U: M = !tenuto!'>
-<music21.abcFormat.ABCMetadata 'K: Edor'>
+        tokensCorrect = '''<music21.abcFormat.ABCReferenceNumber 'X: 979'>
+<music21.abcFormat.ABCTitle 'T: Staccato test, plus accents and tenuto marks'>
+<music21.abcFormat.ABCMeter 'M: 2/4'>
+<music21.abcFormat.ABCUnitNoteLength 'L: 1/16'>
+<music21.abcFormat.ABCUserDefnition 'U: M = !tenuto!'>
+<music21.abcFormat.ABCKey 'K: Edor'>
 <music21.abcFormat.ABCNote 'B,2'>
 <music21.abcFormat.ABCBar '|'>
 <music21.abcFormat.ABCDimStart '!diminuendo(!'>
