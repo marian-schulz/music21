@@ -381,7 +381,7 @@ from music21 import clef
 
 class ABCMetadata(ABCToken):
 
-    TOKEN_REGEX = r'^[ABDFGHmNPRrSsWZ]:.*$|\[[mnPRr]:[^\]\n%]*\]'
+    TOKEN_REGEX = r'^\s*[ABDFGHmNPRrSsWZ]:.*$|\[[mnPRr]:[^\]\n%]*\]'
 
     def __init__(self, src):
         super().__init__(src)
@@ -399,16 +399,16 @@ class ABCMetadata(ABCToken):
 
 
 class ABCReferenceNumber(ABCMetadata):
-    TOKEN_REGEX = r'^X:.*$'
+    TOKEN_REGEX = r'^\s*X:.*$'
 
 class ABCTitle(ABCMetadata):
-    TOKEN_REGEX = r'^T:.*$'
+    TOKEN_REGEX = r'^\s*T:.*$'
 
 class ABCOrigin(ABCMetadata):
-    TOKEN_REGEX = r'^O:.*$'
+    TOKEN_REGEX = r'^\s*O:.*$'
 
 class ABCComposer(ABCMetadata):
-    TOKEN_REGEX = r'^C:.*$'
+    TOKEN_REGEX = r'^\s*C:.*$'
 
 class ABCUnitNoteLength(ABCMetadata):
     r"""
@@ -422,7 +422,7 @@ class ABCUnitNoteLength(ABCMetadata):
     >>> am.defaultQuarterLength
     0.5
     """
-    TOKEN_REGEX = r'^L:.*$'
+    TOKEN_REGEX = r'^\s*L:.*$'
 
     def __init__(self, src):
         super().__init__(src)
@@ -455,8 +455,6 @@ class ABCClef():
     When specifying the name, the 'clef=' can also be omitted
 
     >>> md = abcFormat.ABCClef('clef=treble')
-    >>> md.name
-    'treble'
 
     >>> md = abcFormat.ABCClef('bass-8')
     >>> md.clef
@@ -494,29 +492,29 @@ class ABCClef():
 
     def __init__(self, data: str):
         self.transpose = 0
-        self.name = None
         self.octave = None
         self.clef = None
+        self.clef_name = None
 
         # list of unamed matches
         unamed  = []
         for m in CLEF_RE.finditer(data):
             k = m.lastgroup
             v = m.group()
-            if k in ['transpose', 'octave', 'name']:
+            if k in ['transpose', 'octave', 'clef_name']:
                 setattr(self, k, v.split('=')[1].strip().strip('"'))
             else:
                 unamed.append(v.strip())
 
         # the clef name is allowed without clef=<name>
-        if self.name is None:
+        if self.clef_name is None:
             for tag in unamed:
                 if tag in ABCClef.CLEF_NAMES:
-                    self.name = tag
+                    self.clef_name = tag
                     break
 
-        if self.name:
-            self.clef = ABCClef.CLEF_NAMES[self.name]()
+        if self.clef_name:
+            self.clef = ABCClef.CLEF_NAMES[self.clef_name]()
 
         if self.octave is None:
             self.octave = self.clef.octaveChange if self.clef else None
@@ -533,7 +531,7 @@ class ABCClef():
 VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*\S+)|(?P<subname>(subname|snm|sname)\s*=\s*\S+)')
 class ABCVoice(ABCMetadata,  ABCClef):
 
-    TOKEN_REGEX = r'^V:.*$|\[V:[^\]\n%]*\]'
+    TOKEN_REGEX = r'^\s*V:.*$|\[V:[^\]\n%]*\]'
 
     def __init__(self, src):
         r"""
@@ -572,7 +570,7 @@ class ABCTempo(ABCMetadata):
     >>> am.getMetronomeMarkObject()
     <music21.tempo.MetronomeMark Allegro Quarter=120.0>
     """
-    TOKEN_REGEX = r'^Q:.*$|\[Q:[^\]\n%]*\]'
+    TOKEN_REGEX = r'^\s*Q:.*$|\[Q:[^\]\n%]*\]'
 
     def __init__(self, src):
         super().__init__(src)
@@ -666,7 +664,7 @@ class ABCUserDefinition(ABCMetadata):
     >>> v.definition
     '.u'
     """
-    TOKEN_REGEX = r'^U:.*$|\[U:[^\]\n%]*\]'
+    TOKEN_REGEX = r'^\s*U:.*$|\[U:[^\]\n%]*\]'
 
     def __init__(self, src):
         super().__init__(src)
@@ -727,7 +725,7 @@ class ABCKey(ABCMetadata, ABCClef):
     <music21.clef.TrebleClef>
     """
 
-    TOKEN_REGEX = r'^K:.*$|\[K:[^\]\n%]*\]'
+    TOKEN_REGEX = r'^\s*K:.*$|\[K:[^\]\n%]*\]'
 
     def __init__(self, src: str):
         super().__init__(src)
@@ -910,14 +908,16 @@ class ABCInstruction(ABCMetadata):
     >>> i.instruction
     'pitch'
     """
-    TOKEN_REGEX = r'^I:.*$|\[I:[^\]\n%]*\]'
+    TOKEN_REGEX = r'^\s*I:.*$|\[I:[^\]\n%]*\]'
 
     def __init__(self, src: str):
         super().__init__(src)
         parts = self.data.split(' ', 1)
         self.key = parts[0].strip()
-        self.instruction = parts[1].strip()
-
+        try:
+            self.instruction = parts[1].strip()
+        except :
+            self.instruction = ''
 
 class ABCMeter(ABCMetadata):
     '''
@@ -935,7 +935,7 @@ class ABCMeter(ABCMetadata):
     0.25
     '''
 
-    TOKEN_REGEX = r'^M:.*$|\[M:[^\]\n%]*\]'
+    TOKEN_REGEX = r'^\s*M:.*$|\[M:[^\]\n%]*\]'
 
     def __init__(self, src):
         super().__init__(src)
@@ -983,7 +983,7 @@ class ABCMeter(ABCMetadata):
         Return a music21 :class:`~music21.meter.TimeSignature`
         object for this metadata tag, if isMeter is True, otherwise raise exception.
 
-        >>> am = abcFormat.ABCMeter('M:2/2')
+        >>> am = abcFormat.ABCMeter('^\s*M:2/2')
         >>> am.getTimeSignatureObject()
         <music21.meter.TimeSignature 2/2>
 
@@ -1037,7 +1037,7 @@ class ABCMeter(ABCMetadata):
 RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
 
 class ABCLyrics(ABCMetadata):
-    TOKEN_REGEX = r'w:.*((([\][\n]w)|([\n][+])):.*)*'
+    TOKEN_REGEX = r'^\s*w:.*((([\][\n]w)|([\n][+])):.*)*'
 
     def __init__(self, src: str):
         r'''
@@ -1715,7 +1715,7 @@ class ABCGeneralNote(ABCToken):
 
         return defaultQuarterLength * self.brokenRyhtmModifier * self.lengthModifier
 
-    def m21Object(self):
+    def m21Object(self, octave_transposition: Optional[int] = 0):
         """
         return:
             music21 object corresponding to the token.
@@ -1794,12 +1794,12 @@ class ABCGeneralNote(ABCToken):
 
 
 class ABCRest(ABCGeneralNote):
-    TOKEN_REGEX = r'[zZ][0-9/]*'
+    TOKEN_REGEX = r'[zZx][0-9/]*'
 
     def __init__(self, src):
         super().__init__(src, length=src[1:])
 
-    def m21Object(self):
+    def m21Object(self, octave_transposition: Optional[int] = 0):
         from music21 import note
         rest = note.Rest()
         rest.duration.quarterLength = self.quarterLength()
@@ -1908,21 +1908,23 @@ class ABCNote(ABCGeneralNote):
 
         return (pitch.upper(), accidental, octave, length)
 
-    def getPitchName(self,
+    def getPitchName(self, octave_transposition: int = 0,
                      keySignature: Optional['music21.key.KeySignature'] = None,
                      carriedAccidental: Optional[str] = None) -> Tuple[str, bool]:
         """
         Parse the note & return
         """
-
         if keySignature is None:
             keySignature = self.keySignature
 
         if carriedAccidental is None:
             carriedAccidental = self.carriedAccidental
 
+        octave = self.octave + octave_transposition
+
+
         cache_key = (self.pitchClass,
-                     self.octave,
+                     octave,
                      carriedAccidental,
                      self.accidental,
                      str(keySignature)
@@ -1956,11 +1958,11 @@ class ABCNote(ABCGeneralNote):
                 # the abc pitch has no accidental and no active accidental
                 accidental, display = '', None
 
-            result = (f'{self.pitchClass}{accidental}{self.octave}', display)
+            result = (f'{self.pitchClass}{accidental}{octave}', display)
             _pitchTranslationCache[cache_key] = result
             return result
 
-    def m21Object(self) -> Union['music21.note.Note', 'music21.note.Rest']:
+    def m21Object(self, octave_transposition: int = 0) -> Union['music21.note.Note', 'music21.note.Rest']:
         """
             Get a music21 note or restz object
             QuarterLength, ties, articulations, expressions, grace,
@@ -2012,7 +2014,7 @@ class ABCNote(ABCGeneralNote):
         True
         """
         from music21 import note
-        pitchName, accidentalDisplayStatus = self.getPitchName()
+        pitchName, accidentalDisplayStatus = self.getPitchName(octave_transposition=octave_transposition)
         try:
             n = note.Note(pitchName)
         except:
@@ -2125,7 +2127,7 @@ class ABCChord(ABCGeneralNote):
 
         return self.lengthModifier * self.brokenRyhtmModifier * self._first_note.quarterLength(defaultQuarterLength)
 
-    def m21Object(self) -> 'music21.chord.Chort':
+    def m21Object(self, octave_transposition: int=0) -> 'music21.chord.Chort':
         """
             Get a music21 chord object
             QuarterLength, ties, articulations, expressions, grace,
@@ -2141,7 +2143,7 @@ class ABCChord(ABCGeneralNote):
         if self.isEmpty:
             return None
 
-        notes = [n.m21Object() for n in self.subTokens if isinstance(n, ABCNote)]
+        notes = [n.m21Object(octave_transposition) for n in self.subTokens if isinstance(n, ABCNote)]
 
         from music21.chord import Chord
         c = Chord(notes)
@@ -2761,6 +2763,7 @@ class ABCHandlerVoice(ABCHandler):
         # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
         # Do not process tokens
         processor = ABCTokenProcessor(abcVersion=self.abcVersion)
+
         self.tokens = list(
             processor.process(self)
         )
@@ -2809,7 +2812,6 @@ class ABCHandlerBar(ABCHandler):
                     setattr(ah, barAttr, bNew)
 
         return ah
-
 
 class ABCTokenProcessor():
     '''
@@ -2901,7 +2903,7 @@ class ABCTokenProcessor():
         cp.lastDefaultQL = self.lastDefaultQL
 
         # process the inner chord tokens
-        token.subTokens = list(cp.process(token.subTokens))
+        token.subTokens = list(cp.process(ABCHandler(token.subTokens)))
         return token
 
     def process_ABCExpression(self, token: ABCExpression):
@@ -3072,8 +3074,8 @@ class ABCTokenProcessor():
         for processing. If no method with this name has found it will search for a
         method of one of his base classes.
         '''
-        if not isinstance(handler, ABCHandlerVoice):
-            raise ABCHandlerException(f'Cannot process {handler}, a <ABCHandlerVoice is required !>')
+        #if not isinstance(handler, ABCHandlerVoice):
+        #    raise ABCHandlerException(f'Cannot process {handler}, a <ABCHandlerVoice is required !>')
 
         self.handler = handler
         tokenIter = iter(handler.tokens)
@@ -3692,8 +3694,8 @@ if __name__ == '__main__':
     # us = environment.UserSettings()
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
-    with pathlib.Path('Unendliche_Freude.abc').open() as f:
+    with pathlib.Path('avemaria.abc').open() as f:
         avem = f.read()
 
-    s = music21.converter.parse(avem)
+    s = music21.converter.parse(avem, forceSource=True)
     s.show()
