@@ -1,0 +1,9 @@
+X: 1
+T: TEST: treble->bass clef
+L:1/8
+N: Second and third staves should have bass clef.
+K: C
+| CDEF GABc | cdef gabc' |
+K:clef=bass
+| CDEF GABc | cdef gabc' |
+| CDEF GABc | cdef gabc' |

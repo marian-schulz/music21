@@ -98,15 +98,10 @@ class ABCHeaderTranslator(ABCTranslator):
     def __init__(self, metaData: Optional[metadata.Metadata] = None):
         super().__init__()
         self.midi = {}
-        self.abcKey: Optional[abcFormat.ABCKey] = None
-        self.abcMeter : Optional[abcFormat.ABCMeter] = None
-        self.abcTempo: Optional[abcFormat.ABCTempo] = None
-        self.metadata = metaData
+
 
     def translate(self, abcHandler: 'abcFormat.ABCHandler', m21Target: stream.Stream):
-        self.metadata = metadata.Metadata()
-        m21Target.coreInsert(0, self.metadata)
-        super().translate(abcHandler, m21Target)
+
 
     def translate_ABCTitle(self, token: 'abcFormat.ABCTitle'):
         if self.metadata.title:
@@ -124,25 +119,20 @@ class ABCHeaderTranslator(ABCTranslator):
         # Convert referenceNumber to a number string
         self.metadata.number, _ = common.getNumFromStr(token.data)
 
-    def translate_ABCMeter(self, token: 'abcFormat.ABCMeter'):
-        self.abcMeter = token
-
-    def translate_ABCKey(self, token: 'abcFormat.ABCKey'):
-        self.abcKey = token
-
-    def translate_ABCTempo(self, token: 'abcFormat.ABCTempo'):
-        self.abcTempo = token
-
 
 class ABCTokenTranslator(ABCTranslator):
 
-    def __init__(self, parent: stream.Part, octave_transposition=None):
+    def __init__(self, parent: stream.Part, metaData: metadata.Metadata):
         super().__init__()
         self.parent = parent
-        self.octave_transposition = octave_transposition
+        self.metadata = metaData
+        self.octave_transposition = None
         self.timeSignature = None
         self.clef = None
         self.keySignature = None
+
+        m21Target.coreInsert(0, self.metadata)
+        super().translate(abcHandler, m21Target)
 
     def translate(self, handler: 'abcFormat.ABCHandler',
                         target: Union[stream.Measure, stream.Part]):
@@ -181,8 +171,8 @@ class ABCTokenTranslator(ABCTranslator):
             self.parent.coreInsert(0, m21object)
 
 
-def abcToStreamMeasure(abcBar: 'abcFormat.ABCHandlerBar', m21Measure: stream.Measure, spannerBundle, translator):
-
+def abcToStreamMeasure(abcBar: 'abcFormat.ABCHandlerBar', spannerBundle, translator):
+    m21Measure = stream.Measure()
     translator.translate(abcBar, target=m21Measure)
 
     if abcBar.leftBarToken is not None:
@@ -235,9 +225,9 @@ def abcToStreamMeasure(abcBar: 'abcFormat.ABCHandlerBar', m21Measure: stream.Mea
                 # this returns 1 or 2 depending on the repeat
                 # do not need to append; already in bundle
 
+    return m21Measure
 
 def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
-                    headerTranslator: ABCHeaderTranslator,
                     m21Part: Optional[stream.Part]=None ) -> stream.Part:
     '''
     Handler conversion of a single Part of a multi-part score.
@@ -249,57 +239,18 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
     if m21Part is None:
         m21Part = stream.Part()
 
-    octave_transposition = None
-    if headerTranslator.abcKey:
-        m21Part.keySignature = headerTranslator.abcKey.getKeySignatureObject()
-        m21Part.clef = headerTranslator.abcKey.clef
-        octave_transposition = headerTranslator.abcKey.octave
 
-    if headerTranslator.abcMeter:
-        m21Part.timeSignature = headerTranslator.abcMeter.getTimeSignatureObject()
-
-    for abcVoice in voiceHandler.abcVoices:
-        if abcVoice.clef:
-            m21Part.clef = abcVoice.clef
-        if abcVoice.octave:
-            octave_transposition = abcVoice.octave
-        if abcVoice.name:
-            m21Part.partName = abcVoice.name
-
-
-    partTranslator = ABCTokenTranslator(parent=m21Part, octave_transposition=octave_transposition)
+    translator = ABCTokenTranslator(parent=m21Part)
     hasMeasures = voiceHandler.definesMeasures()
 
     if not hasMeasures:
-        partTranslator.translate(handler=voiceHandler, target=m21Part)
+        translator.translate(handler=voiceHandler, target=m21Part)
     else:
-
         barHandlers = voiceHandler.splitByMeasure()
         spannerBundle = spanner.SpannerBundle()
-
-        # tranlsate first measure seperat
-        m21FirstMeasure = stream.Measure()
-        m21FirstMeasure.keySignature = m21Part.keySignature
-        m21FirstMeasure.timeSignature = m21Part.timeSignature
-        m21FirstMeasure.clef = m21Part.clef
-        m21FirstMeasure.number = 0
-        abcToStreamMeasure(barHandlers[0], m21FirstMeasure, spannerBundle, partTranslator)
-        if m21Part.timeSignature is not None:  # easy case
-            # can only do this b/c ts is defined
-            if m21FirstMeasure.barDurationProportion() < 1.0:
-                m21FirstMeasure.padAsAnacrusis()
-        if headerTranslator.abcTempo:
-            m21FirstMeasure.coreInsert(0, headerTranslator.abcTempo.getMetronomeMarkObject())
-
-        m21Part.coreAppend(m21FirstMeasure)
-
+        m21Measures = []
         for barNumber, abcBarHandler in enumerate(barHandlers[1:], start=1):
-
-            m21Measure = stream.Measure()
-            #if headerTranslator.abcTempo:
-            #    m21Measure.coreAppend( headerTranslator.abcTempo.getMetronomeMarkObject())
-
-            abcToStreamMeasure(abcBarHandler, m21Measure, spannerBundle, partTranslator)
+            m21Measure = abcToStreamMeasure(abcBarHandler, spannerBundle, translator)
 
             # append measure to part; in the case of trailing meta data
             # dst may be part, even though useMeasures is True
@@ -308,6 +259,17 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
                 continue
 
             m21Measure.number = barNumber
+            m21Measures.append(m21Measure)
+
+        firstM21Measure = m21Measures[0]
+        # Check for an ancrusis in the first measure
+        if firstM21Measure.timeSignature is not None:  # easy case
+            # can only do this b/c ts is defined
+            if firstM21Measure.barDurationProportion() < 1.0:
+                firstM21Measure.padAsAnacrusis()
+
+
+        for m in m21Measures:
             m21Part.coreAppend(m21Measure)
 
         # copy spanners into topmost container; here, a part
@@ -315,6 +277,7 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
         for sp in spannerBundle.getByCompleteStatus(True):
             m21Part.coreInsert(0, sp)
             rm.append(sp)
+
         # remove from original spanner bundle
         for sp in rm:
             spannerBundle.remove(sp)
@@ -330,7 +293,7 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
     # following the meta data, or in the open stream
     if not m21Part.clef and not m21Part.recurse().getElementsByClass('Clef'):
         if hasMeasures:  # assume at start of measures
-            m21Part.getElementsByClass('Measure')[0].clef = clef.bestClef(m21Part, recurse=True)
+            firstM21Measure.clef = clef.bestClef(m21Part, recurse=True)
         else:
            m21Part.coreInsert(0, clef.bestClef(m21Part, recurse=True))
 
@@ -398,27 +361,12 @@ def abcToStreamScore(abcHandler: 'abcFormat.ABCHandler', m21Score: stream.Score=
     always be made :class:`~music21.stream.Part` objects.
     '''
 
-
     m21Score = stream.Score() if  m21Score is None else m21Score
 
-    # split the tune is voices (part)
-    # eache voice comes with common leading metadata
-    # it is importend to process tokens after (not before) spliting into voices
-
-    headerHandler, voiceHandlers = abcHandler.splitByVoice()
-    headerTranslator = ABCHeaderTranslator()
-    headerTranslator.translate(headerHandler, m21Score)
-    # process and translate each of the voices
-
-    for voiceHandler in voiceHandlers:
-        voiceHandler.process()
-        m21Part = abcToStreamPart(voiceHandler=voiceHandler, headerTranslator=headerTranslator)
+    # translate the voices to parts
+    for voiceHandler in abcHandler.process():
+        m21Part = abcToStreamPart(voiceHandler=voiceHandler)
         m21Score.coreAppend(m21Part)
-
-    if headerTranslator.abcTempo:
-        #m21Score.parts[0].measure(0).insert(0, headerTranslator.abcTempo.getMetronomeMarkObject())
-        #m21Score.parts[0].insert(0, headerTranslator.abcTempo.getMetronomeMarkObject())
-        pass
 
     m21Score.coreElementsChanged()
     return m21Score
@@ -779,7 +727,7 @@ class Test(unittest.TestCase):
 
         from music21 import corpus
         # defines multiple works, will return an opus
-        o = corpus.parse('josquin/milleRegrets')
+        o = corpus.parse('josquin/milleRegrets', forceSource=True)
         self.assertEqual(len(o), 4)
         # each score in the opus is a Stream that contains a Part and metadata
         p1 = o.getScoreByNumber(1).parts[0]
@@ -800,6 +748,7 @@ class Test(unittest.TestCase):
         self.assertEqual(len(p4.flat.notesAndRests), 79)
 
         sMerged = o.mergeScores()
+        #sMerged.show()
         self.assertEqual(sMerged.metadata.title, 'Mille regrets')
         self.assertEqual(sMerged.metadata.composer, 'Josquin des Prez')
         self.assertEqual(len(sMerged.parts), 4)
