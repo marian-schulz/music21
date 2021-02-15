@@ -71,8 +71,10 @@ class ABCTranslator():
 
     def __init__(self):
         self.abcHandler = None
+        self.target = None
 
     def translate(self, handler: 'abcFormat.ABCHandler', target: stream.Stream):
+        self.target = target
         for token in handler.tokens:
             # find a transalte method for the token by class name
             token_translate_method = getattr(self, f'translate_{token.__class__.__name__}', None)
@@ -93,15 +95,21 @@ class ABCTranslator():
                 if m21_object is not None:
                     target.coreAppend(m21_object, setActiveSite=False)
 
+
 class ABCHeaderTranslator(ABCTranslator):
 
     def __init__(self, metaData: Optional[metadata.Metadata] = None):
         super().__init__()
+        # collect
         self.midi = {}
-
+        if metaData is None:
+            self.metadata = metadata.Metadata()
+        else:
+            self.metadata = metaData
 
     def translate(self, abcHandler: 'abcFormat.ABCHandler', m21Target: stream.Stream):
-
+        m21Target.insert(0, self.metadata)
+        super().translate(abcHandler, m21Target)
 
     def translate_ABCTitle(self, token: 'abcFormat.ABCTitle'):
         if self.metadata.title:
@@ -122,24 +130,22 @@ class ABCHeaderTranslator(ABCTranslator):
 
 class ABCTokenTranslator(ABCTranslator):
 
-    def __init__(self, parent: stream.Part, metaData: metadata.Metadata):
+    def __init__(self, parent: stream.Part):
         super().__init__()
         self.parent = parent
-        self.metadata = metaData
         self.octave_transposition = None
         self.timeSignature = None
         self.clef = None
         self.keySignature = None
 
-        m21Target.coreInsert(0, self.metadata)
-        super().translate(abcHandler, m21Target)
-
-    def translate(self, handler: 'abcFormat.ABCHandler',
+    def translate(self, handler: 'abcFormat.ABCVoiceHandler',
                         target: Union[stream.Measure, stream.Part]):
         #target.clef = self.clef
         #target.keySignature = self.keySignature
-        if self.octave_transposition is None:
-            self.octave_transposition = 0
+
+        self.timeSignature = None
+        self.clef = None
+        self.keySignature = None
 
         super().translate(handler, target)
 
@@ -149,17 +155,26 @@ class ABCTokenTranslator(ABCTranslator):
 
     def translate_ABCKey(self, token: 'abcFormat.ABCKey'):
         ks = token.getKeySignatureObject()
-        if ks:
-            self.keySignature = ks
         cl = token.getClefObject()
         if cl:
-            self.clef = cl
+            self.target.clef = cl
+
+        if token.octave is not None:
+            self.octave_transposition = token.octave
         return ks
+
+    def translate_ABCVoice(self, token: 'abcFormat.ABCVoice'):
+        if token.octave is not None:
+            self.octave_transposition = token.octave
+
+        return token.clef
 
     def translate_ABCTempo(self, token: 'abcFormat.ABCTempo'):
         return token.getMetronomeMarkObject()
 
     def translate_ABCGeneralNote(self, token: 'abcFormat.ABCGeneralNote'):
+        if self.octave_transposition is None:
+            self.octave_transposition = 0
         return token.m21Object(octave_transposition=self.octave_transposition)
 
     def translate_ABCMark(self, token: 'abcFormat.ABCMark'):
@@ -249,7 +264,7 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
         barHandlers = voiceHandler.splitByMeasure()
         spannerBundle = spanner.SpannerBundle()
         m21Measures = []
-        for barNumber, abcBarHandler in enumerate(barHandlers[1:], start=1):
+        for barNumber, abcBarHandler in enumerate(barHandlers, start=0):
             m21Measure = abcToStreamMeasure(abcBarHandler, spannerBundle, translator)
 
             # append measure to part; in the case of trailing meta data
@@ -270,7 +285,7 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
 
 
         for m in m21Measures:
-            m21Part.coreAppend(m21Measure)
+            m21Part.coreAppend(m)
 
         # copy spanners into topmost container; here, a part
         rm = []
@@ -362,9 +377,15 @@ def abcToStreamScore(abcHandler: 'abcFormat.ABCHandler', m21Score: stream.Score=
     '''
 
     m21Score = stream.Score() if  m21Score is None else m21Score
+    headerHandler, voices = abcHandler.process()
+
+    headerTranslator = ABCHeaderTranslator()
+    headerTranslator.translate(headerHandler, m21Score)
+    # Insert Metadata to the stream using the HeaderTransaltor
+
 
     # translate the voices to parts
-    for voiceHandler in abcHandler.process():
+    for voiceHandler in voices:
         m21Part = abcToStreamPart(voiceHandler=voiceHandler)
         m21Score.coreAppend(m21Part)
 
