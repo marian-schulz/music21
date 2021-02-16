@@ -23,58 +23,97 @@ module's :func:`~music21.converter.parse` function.
 import copy
 import unittest
 import re
+from typing import Dict, Tuple, List, Union, Optional
 
 from music21 import clef
 from music21 import common
 from music21 import environment
 from music21 import exceptions21
 from music21 import meter
-from music21 import tempo
 from music21 import stream
-from music21 import note
-from music21 import interval
-from music21.duration import GraceDuration
 from music21 import spanner
 from music21 import harmony
-from music21 import key
 from music21 import instrument
 from music21 import metadata
-from collections import defaultdict
-from typing import Dict, Tuple, List, Union, Optional
+from music21 import duration
 from music21 import abcFormat
-
+from music21 import note
 
 environLocal = environment.Environment('abcFormat.translate')
-
 
 class ABCTranslateException(exceptions21.Music21Exception):
     pass
 
-MIDI_RE = re.compile('voice\s*(?P<voice>.+)\s+instrument\s*=\s*(?P<instrument>.*)')
-def get_midi_voice(instruction: str) -> Tuple[str, int]:
-    match = MIDI_RE.match(instruction)
+MIDI_1_RE = re.compile('voice\s+(?P<voiceID>[0-9]*)\s*instrument\s*=\s*(?P<program>[0-9]+)')
+MIDI_2_RE = re.compile('program(?P<channel>\s+[0-9]+)?(?P<program>\s+[0-9]+)')
+
+def get_instrument(instruction: str) -> Tuple[str, int]:
+    match = MIDI_2_RE.match(instruction)
     if match:
-        gd = match.groupdict()
-        voice_id = gd['voice']
-        midi_instrument = gd['instrument']
-        if midi_instrument.isdigit():
-            midi_instrument = instrument.instrumentFromMidiProgram(int(gd['instrument']))
-        else:
-            midi_instrument = instrument.fromString(midi_instrument)
-
-        return voice_id, midi_instrument
+        midiProgram = int(match.groupdict()['program'].strip())
+        voiceId = None
     else:
-        raise ABCTranslateException(f'Invalid midi instruction: "{instruction}"')
+        match = MIDI_1_RE.match(instruction)
+        if match:
+            gd = match.groupdict()
+            voiceId = gd['voice']
+            if voiceId is not None:
+                voiceId = voiceId.strip()
+            midiProgram = int(gd['instrument'].strip())
+        else:
+            raise ABCTranslateException(f'Invalid midi instruction: "{instruction}"')
 
+    return voiceId, midiProgram
+
+
+def assign_lyrics(lyrics: List['abcFormat.ABCLyrics'], target: stream.Stream):
+    """
+    Assign the syllables of multiple verses to the notes of a stream
+    """
+    for verse_number, verse in enumerate(lyrics):
+        verse = verse.syllables
+        if verse:
+            # look at the first syllable and skip the measure on '|'
+            if verse[0] == '|':
+                verse.pop(0)
+                continue
+        else:
+            continue
+
+        # start alligning syllable to notes
+        for n in target.notes:
+            if isinstance(n, harmony.ChordSymbol) \
+                or isinstance(n.duration, duration.GraceDuration):
+                # Do not allign syllables to chord symbols, and grace notes
+                continue
+
+            if verse:
+                syllable = verse[0]
+                verse.pop(0)
+            else:
+                break
+
+            # skip the measure
+            if syllable == '|':
+                break
+
+            # previous syllable is to be held for an extra note
+            if syllable == '_':
+                continue
+
+            if syllable == '*':
+                n.lyrics.append(note.Lyric(number=verse_number, text=''))
+            else:
+                n.lyrics.append(note.Lyric(number=verse_number, text=syllable))
 
 class ABCTranslator():
 
     def __init__(self):
         self.abcHandler = None
-        self.target = None
+        self.m21Target = None
 
     def translate(self, handler: 'abcFormat.ABCHandler', target: stream.Stream):
-        self.target = target
+        self.m21Target = target
         for token in handler.tokens:
             # find a transalte method for the token by class name
             token_translate_method = getattr(self, f'translate_{token.__class__.__name__}', None)
@@ -100,16 +139,31 @@ class ABCHeaderTranslator(ABCTranslator):
 
     def __init__(self, metaData: Optional[metadata.Metadata] = None):
         super().__init__()
-        # collect
         self.midi = {}
+        # contains V: tokens (ABCVoice) for each voice
+        self.abcVoices: Dict[str, List[abcFormat.ABCVoice]] = { '*': [] }
+        self.abcKey  = None
+        self.abcMeter  = None
+        self.tempo = None
         if metaData is None:
             self.metadata = metadata.Metadata()
         else:
             self.metadata = metaData
 
     def translate(self, abcHandler: 'abcFormat.ABCHandler', m21Target: stream.Stream):
-        m21Target.insert(0, self.metadata)
         super().translate(abcHandler, m21Target)
+        self.m21Target.insert(0, self.metadata)
+
+    def translate_ABCVoice(self, token: 'abcFormat.ABCVoice'):
+        if token.voiceId == '*':
+            # the '*' id address all voices
+            for abcVoiceTokens in self.abcVoices.values():
+                abcVoiceTokens.append(token)
+        elif token.voiceId in self.abcVoices:
+            self.abcVoices[token.voiceId].append(token)
+        else:
+            # for new introduced voices, get the '*' (all voices) tokens
+            self.abcVoices[token.voiceId] = self.abcVoices['*'] + [token]
 
     def translate_ABCTitle(self, token: 'abcFormat.ABCTitle'):
         if self.metadata.title:
@@ -127,6 +181,19 @@ class ABCHeaderTranslator(ABCTranslator):
         # Convert referenceNumber to a number string
         self.metadata.number, _ = common.getNumFromStr(token.data)
 
+    def translate_ABCMeter(self, token: 'abcFormat.ABCMeter'):
+        self.abcMeter = token
+
+    def translate_ABCKey(self, token: 'abcFormat.ABCKey'):
+        self.abcKey  = token
+
+    def translate_ABCTempo(self, token: 'abcFormat.ABCTempo'):
+        self.tempo = token
+
+    def translate_ABCInstruction(self, token: 'abcFormat.ABCInstruction'):
+        if token.key.lower() == 'midi':
+            voiceId, m21Instrument = get_instrument(token.instruction)
+            self.midi[voiceId] = m21Instrument
 
 class ABCTokenTranslator(ABCTranslator):
 
@@ -134,18 +201,11 @@ class ABCTokenTranslator(ABCTranslator):
         super().__init__()
         self.parent = parent
         self.octave_transposition = None
-        self.timeSignature = None
-        self.clef = None
-        self.keySignature = None
+        self.lyrics = []
+
 
     def translate(self, handler: 'abcFormat.ABCVoiceHandler',
                         target: Union[stream.Measure, stream.Part]):
-        #target.clef = self.clef
-        #target.keySignature = self.keySignature
-
-        self.timeSignature = None
-        self.clef = None
-        self.keySignature = None
 
         super().translate(handler, target)
 
@@ -157,7 +217,7 @@ class ABCTokenTranslator(ABCTranslator):
         ks = token.getKeySignatureObject()
         cl = token.getClefObject()
         if cl:
-            self.target.clef = cl
+            self.m21Target.coreAppend(cl)
 
         if token.octave is not None:
             self.octave_transposition = token.octave
@@ -169,12 +229,17 @@ class ABCTokenTranslator(ABCTranslator):
 
         return token.clef
 
-    def translate_ABCTempo(self, token: 'abcFormat.ABCTempo'):
-        return token.getMetronomeMarkObject()
+    #def translate_ABCTempo(self, token: 'abcFormat.ABCTempo'):
+    #    return token.getMetronomeMarkObject()
+
 
     def translate_ABCGeneralNote(self, token: 'abcFormat.ABCGeneralNote'):
-        if self.octave_transposition is None:
-            self.octave_transposition = 0
+        # set new lyrics
+        if token.lyrics:
+            if self.lyrics:
+                environLocal.printDebug(['There are unassigned lyrics.'])
+            self.lyrics = token.lyrics
+
         return token.m21Object(octave_transposition=self.octave_transposition)
 
     def translate_ABCMark(self, token: 'abcFormat.ABCMark'):
@@ -186,64 +251,136 @@ class ABCTokenTranslator(ABCTranslator):
             self.parent.coreInsert(0, m21object)
 
 
-def abcToStreamMeasure(abcBar: 'abcFormat.ABCHandlerBar', spannerBundle, translator):
-    m21Measure = stream.Measure()
-    translator.translate(abcBar, target=m21Measure)
+def abcToStreamMeasure(voiceHandler: 'abcFormat.ABCHandlerVoice', m21Part: stream.Part, translator: ABCTokenTranslator):
 
-    if abcBar.leftBarToken is not None:
-        # this may be Repeat Bar subclass
-        bLeft = abcBar.leftBarToken.m21Object()
-        if bLeft is not None:
-            m21Measure.leftBarline = bLeft
+    barHandlers = voiceHandler.splitByMeasure()
+    spannerBundle = spanner.SpannerBundle()
+    m21Measures = []
 
-        if abcBar.leftBarToken.isRepeatBracket():
-            # get any open spanners of RepeatBracket type
-            rbSpanners = spannerBundle.getByClass('RepeatBracket'
-                                                  ).getByCompleteStatus(False)
-            # this indication is most likely an opening, as ABC does
-            # not encode second ending ending boundaries
-            # we can still check thought:
-            if not rbSpanners:
-                # add this measure as a component
-                rb = spanner.RepeatBracket(m21Measure)
-                # set number, returned here
-                rb.number = abcBar.leftBarToken.isRepeatBracket()
-                # only append if created; otherwise, already stored
-                spannerBundle.append(rb)
-            else:  # close it here
-                rb = rbSpanners[0]  # get RepeatBracket
-                rb.addSpannedElements(m21Measure)
-                rb.completeStatus = True
-                # this returns 1 or 2 depending on the repeat
-            # in ABC, second repeats close immediately; that is
-            # they never span more than one measure
-            if abcBar.leftBarToken.isRepeatBracket() == 2:
-                rb.completeStatus = True
+    for barNumber, abcBar in enumerate(barHandlers, start=0):
+        m21Measure = stream.Measure()
 
-    if abcBar.rightBarToken is not None:
-        bRight = abcBar.rightBarToken.m21Object()
-        if bRight is not None:
-            m21Measure.rightBarline = bRight
-        # above returns bars and repeats; we need to look if we just
-        # have repeats
-        if abcBar.rightBarToken.isRepeat():
-            # if we have a right bar repeat, and a spanner repeat
-            # bracket is open (even if just assigned above) we need
-            # to close it now.
-            # presently, now r bar conditions start a repeat bracket
-            rbSpanners = spannerBundle.getByClass(
-                'RepeatBracket').getByCompleteStatus(False)
-            if any(rbSpanners):
-                rb = rbSpanners[0]  # get RepeatBracket
-                rb.addSpannedElements(m21Measure)
-                rb.completeStatus = True
-                # this returns 1 or 2 depending on the repeat
-                # do not need to append; already in bundle
+        translator.translate(abcBar, target=m21Measure)
 
-    return m21Measure
+        if abcBar.leftBarToken is not None:
+            # this may be Repeat Bar subclass
+            bLeft = abcBar.leftBarToken.m21Object()
+            if bLeft is not None:
+                m21Measure.leftBarline = bLeft
 
-def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
-                    m21Part: Optional[stream.Part]=None ) -> stream.Part:
+            if abcBar.leftBarToken.isRepeatBracket():
+                # get any open spanners of RepeatBracket type
+                rbSpanners = spannerBundle.getByClass('RepeatBracket'
+                                                      ).getByCompleteStatus(False)
+                # this indication is most likely an opening, as ABC does
+                # not encode second ending ending boundaries
+                # we can still check thought:
+                if not rbSpanners:
+                    # add this measure as a component
+                    rb = spanner.RepeatBracket(m21Measure)
+                    # set number, returned here
+                    rb.number = abcBar.leftBarToken.isRepeatBracket()
+                    # only append if created; otherwise, already stored
+                    spannerBundle.append(rb)
+                else:  # close it here
+                    rb = rbSpanners[0]  # get RepeatBracket
+                    rb.addSpannedElements(m21Measure)
+                    rb.completeStatus = True
+                    # this returns 1 or 2 depending on the repeat
+                # in ABC, second repeats close immediately; that is
+                # they never span more than one measure
+                if abcBar.leftBarToken.isRepeatBracket() == 2:
+                    rb.completeStatus = True
+
+        if abcBar.rightBarToken is not None:
+            bRight = abcBar.rightBarToken.m21Object()
+            if bRight is not None:
+                m21Measure.rightBarline = bRight
+            # above returns bars and repeats; we need to look if we just
+            # have repeats
+            if abcBar.rightBarToken.isRepeat():
+                # if we have a right bar repeat, and a spanner repeat
+                # bracket is open (even if just assigned above) we need
+                # to close it now.
+                # presently, now r bar conditions start a repeat bracket
+                rbSpanners = spannerBundle.getByClass(
+                    'RepeatBracket').getByCompleteStatus(False)
+                if any(rbSpanners):
+                    rb = rbSpanners[0]  # get RepeatBracket
+                    rb.addSpannedElements(m21Measure)
+                    rb.completeStatus = True
+                    # this returns 1 or 2 depending on the repeat
+                    # do not need to append; already in bundle
+
+        # append measure to part; in the case of trailing meta data
+        # dst may be part, even though useMeasures is True
+        if 'Measure' not in m21Measure.classes:
+            environLocal.warn(f'No "Measure" class found in "{m21Measure}"')
+            continue
+
+        assign_lyrics(lyrics=translator.lyrics, target=m21Measure)
+
+        m21Measure.number = barNumber
+        m21Measures.append(m21Measure)
+
+    firstM21Measure = m21Measures[0]
+
+    # Set a keysignature in the first measure
+    if firstM21Measure.keySignature is None:
+        if m21Part.keySignature:
+            firstM21Measure.keySignature = m21Part.keySignature
+
+    # Check for an ancrusis in the first measure
+    if firstM21Measure.timeSignature is not None:  # easy case
+        # can only do this b/c ts is defined
+        if firstM21Measure.barDurationProportion() < 1.0:
+            firstM21Measure.padAsAnacrusis()
+
+    # Set a clef in the first measure
+    if firstM21Measure.clef is None:
+        if m21Part.clef:
+            firstM21Measure.clef = m21Part.clef
+        else:
+            firstM21Measure.clef = clef.bestClef(m21Part, recurse=True)
+
+    # Set a timesignature in the first measure
+    if firstM21Measure.timeSignature is None:
+        if m21Part.timeSignature:
+            firstM21Measure.timeSignature = m21Part.timeSignature
+
+    # insert measure into the part
+    for m in m21Measures:
+        m21Part.coreAppend(m)
+
+    # copy spanners into the part container
+    rm = []
+    for sp in spannerBundle.getByCompleteStatus(True):
+        m21Part.coreInsert(0, sp)
+        rm.append(sp)
+
+    # remove apnner from original spanner bundle
+    # Why ? - Garabage collection ?
+    for sp in rm:
+        spannerBundle.remove(sp)
+
+    # Fix errors in the Bar size
+    try:
+        reBar(m21Part, inPlace=True)
+    except (ABCTranslateException, meter.MeterException, ZeroDivisionError):
+        pass
+
+    # Create beams
+    if m21Part.recurse().getElementsByClass('TimeSignature'):
+        # call make beams for now; later, import beams
+        # environLocal.printDebug(['abcToStreamPart: calling makeBeams'])
+        try:
+            m21Part.makeBeams(inPlace=True)
+        except (meter.MeterException, stream.StreamException) as e:
+            environLocal.warn(f'Error in beaming...ignoring: {e}')
+
+
+def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice', tuneHeader: ABCHeaderTranslator,
+                    m21Part: Optional[stream.Part]=None) -> stream.Part:
     '''
     Handler conversion of a single Part of a multi-part score.
     Results are added into the provided inputM21 object
@@ -254,71 +391,63 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
     if m21Part is None:
         m21Part = stream.Part()
 
-
     translator = ABCTokenTranslator(parent=m21Part)
+
+    # set voice specific clef properties
+    if voiceHandler.voiceId in tuneHeader.abcVoices:
+        for abcVoice in tuneHeader.abcVoices[voiceHandler.voiceId]:
+            if abcVoice.clef is not None:
+                m21Part.clef = abcVoice.clef
+            if abcVoice.name:
+                m21Part.partName = abcVoice.name
+            if abcVoice.subname:
+                m21Part.partAbbreviation = abcVoice.subname
+            if abcVoice.octave is not None:
+                translator.octave_transposition = abcVoice.octave
+
+    if voiceHandler.voiceId in tuneHeader.midi:
+        m21Part.coreInsert(0, instrument.instrumentFromMidiProgram(tuneHeader.midi[None]))
+    elif None in tuneHeader.midi:
+        m21Part.coreInsert(0, instrument.instrumentFromMidiProgram(tuneHeader.midi[None]))
+
+        # set the default tune timeSignature in the part stream
+    if tuneHeader.abcMeter:
+        m21Part.timeSignature = tuneHeader.abcMeter.getTimeSignatureObject()
+
+    # set the default tune keySignature and clef in the part stream
+    # if not already defined by voice properties
+    if tuneHeader.abcKey:
+        m21Part.keySignature = tuneHeader.abcKey.getKeySignatureObject()
+
+        if m21Part.clef is None and tuneHeader.abcKey.clef is not None:
+            m21Part.clef = tuneHeader.abcKey.clef
+
+        if translator.octave_transposition is None:
+           translator.octave_transposition = tuneHeader.abcKey.octave
+
+    if translator.octave_transposition is None:
+       translator.octave_transposition = 0
+
     hasMeasures = voiceHandler.definesMeasures()
 
     if not hasMeasures:
-        translator.translate(handler=voiceHandler, target=m21Part)
-    else:
-        barHandlers = voiceHandler.splitByMeasure()
-        spannerBundle = spanner.SpannerBundle()
-        m21Measures = []
-        for barNumber, abcBarHandler in enumerate(barHandlers, start=0):
-            m21Measure = abcToStreamMeasure(abcBarHandler, spannerBundle, translator)
-
-            # append measure to part; in the case of trailing meta data
-            # dst may be part, even though useMeasures is True
-            if 'Measure' not in m21Measure.classes:
-                environLocal.warn(f'No "Measure" class found in "{m21Measure}"')
-                continue
-
-            m21Measure.number = barNumber
-            m21Measures.append(m21Measure)
-
-        firstM21Measure = m21Measures[0]
-        # Check for an ancrusis in the first measure
-        if firstM21Measure.timeSignature is not None:  # easy case
-            # can only do this b/c ts is defined
-            if firstM21Measure.barDurationProportion() < 1.0:
-                firstM21Measure.padAsAnacrusis()
-
-
-        for m in m21Measures:
-            m21Part.coreAppend(m)
-
-        # copy spanners into topmost container; here, a part
-        rm = []
-        for sp in spannerBundle.getByCompleteStatus(True):
-            m21Part.coreInsert(0, sp)
-            rm.append(sp)
-
-        # remove from original spanner bundle
-        for sp in rm:
-            spannerBundle.remove(sp)
-
-    m21Part.coreElementsChanged()
-
-    try:
-        reBar(m21Part, inPlace=True)
-    except (ABCTranslateException, meter.MeterException, ZeroDivisionError):
-        pass
-
-    # clefs are not typically defined, but if so, are set to the first measure
-    # following the meta data, or in the open stream
-    if not m21Part.clef and not m21Part.recurse().getElementsByClass('Clef'):
-        if hasMeasures:  # assume at start of measures
-            firstM21Measure.clef = clef.bestClef(m21Part, recurse=True)
+        if m21Part.timeSignature is None:
+            # we have no measures and no time signature (free meter)
+            # To avoid automatic creation of measures by the exporter we
+            # create a dummy measure and put anything in here.
+            m21DummyMeasure = stream.Measure()
+            translator.translate(voiceHandler, target=m21DummyMeasure)
+            m21Part.coreAppend(m21DummyMeasure)
         else:
-           m21Part.coreInsert(0, clef.bestClef(m21Part, recurse=True))
+            translator.translate(handler=voiceHandler, target=m21Part)
 
-    if hasMeasures and m21Part.recurse().getElementsByClass('TimeSignature'):
-        # call make beams for now; later, import beams
-        # environLocal.printDebug(['abcToStreamPart: calling makeBeams'])
-        try:
-            m21Part.makeBeams(inPlace=True)
-        except (meter.MeterException, stream.StreamException) as e:
-            environLocal.warn(f'Error in beaming...ignoring: {e}')
+        # clefs are not typically defined, but if so, are set to the first measure
+        # following the meta data, or in the open stream
+        if m21Part.clef is None:
+            m21Part.coreInsert(0, clef.bestClef(m21Part, recurse=True))
+
+    else:
+        abcToStreamMeasure(voiceHandler=voiceHandler, m21Part=m21Part, translator=translator)
 
     m21Part.coreElementsChanged()
     return m21Part
@@ -327,40 +456,6 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice',
 LYRIC_VERSES = []
 
 """
-    for verse_number, verse in enumerate(LYRIC_VERSES):
-        if verse:
-            # look at the first syllable and skip the measure on '|'
-            if verse[0] == '|':
-                verse.pop(0)
-                continue
-        else:
-            continue
-
-        # start alligning syllable to notes
-        for n in dst.notesAndRests:
-            if isinstance(n, (harmony.ChordSymbol, note.Rest)) \
-                or isinstance(n.duration, GraceDuration):
-                # Do not allign syllables to Chordsymbols, Rests and Gracenotes
-                continue
-
-            if verse:
-                syllable = verse[0]
-                verse.pop(0)
-            else:
-                break
-
-            # skip the measure
-            if syllable == '|':
-                break
-
-            # previous syllable is to be held for an extra note
-            if syllable == '_':
-                continue
-
-            if syllable == '*':
-                n.lyrics.append(note.Lyric(number=verse_number, text=''))
-            else:
-                n.lyrics.append(note.Lyric(number=verse_number, text=syllable))
 
 """
 
@@ -381,15 +476,17 @@ def abcToStreamScore(abcHandler: 'abcFormat.ABCHandler', m21Score: stream.Score=
 
     headerTranslator = ABCHeaderTranslator()
     headerTranslator.translate(headerHandler, m21Score)
-    # Insert Metadata to the stream using the HeaderTransaltor
-
 
     # translate the voices to parts
     for voiceHandler in voices:
-        m21Part = abcToStreamPart(voiceHandler=voiceHandler)
+        m21Part = abcToStreamPart(voiceHandler=voiceHandler, tuneHeader=headerTranslator)
         m21Score.coreAppend(m21Part)
 
     m21Score.coreElementsChanged()
+
+    # insert the metronomeMark form header at the first measure of the first voice
+    if headerTranslator.tempo and m21Score.parts:
+        m21Score.parts[0].measure(0).insert(0, headerTranslator.tempo.getMetronomeMarkObject())
     return m21Score
 
 

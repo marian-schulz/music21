@@ -58,7 +58,7 @@ import io
 import pathlib
 import re
 import unittest
-from typing import Union, Optional, List, Tuple, Type, Dict, Callable, Iterator
+from typing import Union, Optional, List, Tuple, Type, Dict, Callable, Iterator, NamedTuple
 import itertools
 
 from music21 import common
@@ -70,6 +70,7 @@ from music21 import expressions
 from music21 import dynamics
 from music21 import repeat
 from music21 import meter
+
 
 from music21.abcFormat import translate
 from music21.abcFormat import testFiles
@@ -99,6 +100,9 @@ ABC_BARS = [
     ('|', 'regular'),
     (':', 'dotted'),
 ]
+
+
+
 
 # Specification & regular expression of a voice metadata field
 
@@ -182,6 +186,11 @@ class ABCToken(prebase.ProtoM21Object):
 
     def m21Object(self):
         return None
+
+
+class ABCTune(NamedTuple):
+    header: 'ABCHandler'
+    voices: List['ABCHandlerVoice']
 
 
 class ABCMark(ABCToken):
@@ -530,7 +539,7 @@ class ABCClef():
         return self.clef
 
 
-VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*\S+)|(?P<subname>(subname|snm|sname)\s*=\s*\S+)')
+VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*(".*?"|\S+)(?!\S))|(?P<subname>(subname|snm|sname)\s*=\s*(".*?"|\S+)(?!\S))')
 class ABCVoice(ABCMetadata,  ABCClef):
 
     TOKEN_REGEX = r'^\s*V:.*$|\[V:[^\]\n%]*\]'
@@ -652,6 +661,12 @@ class ABCTempo(ABCMetadata):
                                         referent=referent)
         # returns None if not defined
         mmObj.style.fontStyle = 'italic'
+
+        # Fix to placment of the metronommark & tempotext
+        mmObj.positionPlacement = 'above'
+        if mmObj._tempoText:
+            mmObj._tempoText._textExpression.positionPlacement = 'above'
+
         return mmObj
 
 
@@ -2128,7 +2143,7 @@ class ABCChord(ABCGeneralNote):
 
         return self.lengthModifier * self.brokenRyhtmModifier * self._first_note.quarterLength(defaultQuarterLength)
 
-    def m21Object(self, octave_transposition: int=0) -> 'music21.chord.Chort':
+    def m21Object(self, octave_transposition: int=0) -> 'music21.chord.Chord':
         """
             Get a music21 chord object
             QuarterLength, ties, articulations, expressions, grace,
@@ -2336,7 +2351,7 @@ class ABCHandler():
         ah.tokens = self.tokens + other.tokens
         return ah
 
-    def splitByVoice(self) -> List['ABCHandlerVoice']:
+    def splitByVoice(self) -> ABCTune:
         r"""
         Split the tokens of this ABCHandler into al seperat ABCHandlerVoices for each voice.
         Each voice handler got the all the common metadata token of the abc tune header
@@ -2354,10 +2369,10 @@ class ABCHandler():
 
         >>> abcStr = 'M:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||'
         >>> ah = abcFormat.ABCHandler()
-        >>> header, voices = ah.process(abcStr)
-        >>> voices[0]
+        >>> abcTune = ah.process(abcStr)
+        >>> abcTune.voices[0]
         <music21.abcFormat.ABCHandlerVoice object at 0x...>
-        >>> [t.src for t in voices[0].tokens]
+        >>> [t.src for t in abcTune.voices[0].tokens]
         ['M:6/8', 'L:1/8', 'K:G', 'B3', 'A3', '|', 'G6', '|', 'B3', 'A3', '|', 'G6', '||']
 
         >>> abcStr = ('M:6/8\nL:1/8\nV: * clef=treble\nK:G\nV:1 name="Whistle" ' +
@@ -2366,19 +2381,19 @@ class ABCHandler():
         ...     'snm="b" clef=bass\nD3 D3 | D6 | D3 D3 | D6 ||')
         >>> ah = abcFormat.ABCHandler()
         >>> ah.tokenize(abcStr)
-        >>> header, voices = ah.splitByVoice()
-        >>> [t.src for t in voices[0].tokens]
+        >>> abcTune = ah.splitByVoice()
+        >>> [t.src for t in abcTune.voices[0].tokens]
         ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:1 name="Whistle" snm="wh"', 'B3', 'A3',
         '|', 'G6', '|', 'B3', 'A3', '|', 'G6', '||']
-        >>> [t.src for t in voices[1].tokens]
+        >>> [t.src for t in abcTune.voices[1].tokens]
         ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:2 name="violin" snm="v"', 'B', 'd', 'B', 'A',
         'c', 'A', '|', 'G', 'A', 'G', 'D3', '|', 'B', 'd', 'B', 'A', 'c', 'A', '|', 'G', 'A', 'G', 'D6', '||']
-        >>> [t.src for t in voices[2].tokens]
+        >>> [t.src for t in abcTune.voices[2].tokens]
         ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:3 name="Bass" snm="b" clef=bass',
         'D3', 'D3', '|', 'D6', '|', 'D3', 'D3', '|', 'D6', '||']
         """
-        active_voice = []
-        voices = {'1': active_voice}
+        activeVoice = []
+        voices = {'1': activeVoice}
         tokenIter = iter(self.tokens)
 
         header = []
@@ -2396,7 +2411,8 @@ class ABCHandler():
                 break
         else:
             # there are no body tokens, maybe this is an abc include file ?
-            return [self]
+            return ABCTune(header=ABCHandler(header), voices=[])
+
 
         for token in tokenIter:
             if isinstance(token, ABCVoice):
@@ -2408,24 +2424,24 @@ class ABCHandler():
 
                 # change the active voice
                 if token.voiceId in voices:
-                    active_voice = voices[token.voiceId]
+                    activeVoice = voices[token.voiceId]
                 else:
-                    active_voice = []
-                    voices[token.voiceId] = active_voice
+                    activeVoice = []
+                    voices[token.voiceId] = activeVoice
 
-            active_voice.append(token)
+            activeVoice.append(token)
 
-        voice_handler = []
+        voiceHandler = []
         # Create a new Handler for each voice with the header tokens first.
         for voiceId , tokens in voices.items():
             vh = ABCHandlerVoice(voiceId=voiceId,
                                  tokens=header + tokens,
                                  abcVersion=self.abcVersion)
             if vh.hasNotes():
-                voice_handler.append(vh)
+                voiceHandler.append(vh)
 
         # Return the header seperat
-        return ABCHandler(header), voice_handler
+        return ABCTune(header=ABCHandler(header), voices=voiceHandler)
 
     def definesReferenceNumbers(self):
         '''
@@ -2615,8 +2631,8 @@ class ABCHandler():
         Returns a list of ABCHandlerBar instances.
         The first usually defines only Metadata
         >>> ah = abcFormat.ABCHandler()
-        >>> header, voices = ah.process('L:1/2\nK:C\nCG | FA | Cb')
-        >>> mhl = voices[0].splitByMeasure()
+        >>> abcTune = ah.process('L:1/2\nK:C\nCG | FA | Cb')
+        >>> mhl = abcTune.voices[0].splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
         [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>,
         <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
@@ -2628,8 +2644,8 @@ class ABCHandler():
         <music21.abcFormat.ABCBar '|'> None
 
         >>> ah = abcFormat.ABCHandler()
-        >>> header, voices = ah.process('X:1\nL:1/2\n| CG |]')
-        >>> mhl = voices[0].splitByMeasure()
+        >>> abcTune = ah.process('X:1\nL:1/2\n| CG |]')
+        >>> mhl = abcTune.voices[0].splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
         [<music21.abcFormat.ABCReferenceNumber 'X:1'>, <music21.abcFormat.ABCUnitNoteLength 'L:1/2'>,
         <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
@@ -2637,8 +2653,8 @@ class ABCHandler():
         <music21.abcFormat.ABCBar '|'> <music21.abcFormat.ABCBar '|]'>
 
         >>> ah = abcFormat.ABCHandler()
-        >>> header, voices = ah.process('L:1/2\nK:C\n||CG ||||')
-        >>> mhl = voices[0].splitByMeasure()
+        >>> abcTune = ah.process('L:1/2\nK:C\n||CG ||||')
+        >>> mhl = abcTune.voices[0].splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
         [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>,
         <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
@@ -2646,8 +2662,8 @@ class ABCHandler():
         <music21.abcFormat.ABCBar '||'> <music21.abcFormat.ABCBar '||'>
 
         >>> ah = abcFormat.ABCHandler()
-        >>> header, voices = ah.process('L:1/2\nK:C\n|CG|')
-        >>> mhl = voices[0].splitByMeasure()
+        >>> abcTune = ah.process('L:1/2\nK:C\n|CG|')
+        >>> mhl = abcTune.voices[0].splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
         [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>,
         <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
@@ -2655,8 +2671,8 @@ class ABCHandler():
         <music21.abcFormat.ABCBar '|'> <music21.abcFormat.ABCBar '|'>
 
         >>> ah = abcFormat.ABCHandler()
-        >>> header, voices = ah.process('L:1/2\nK:C\nC2 | FC | CB\nK:G\n FA')
-        >>> mhl = voices[0].splitByMeasure()
+        >>> abcTune = ah.process('L:1/2\nK:C\nC2 | FC | CB\nK:G\n FA')
+        >>> mhl = abcTune.voices[0].splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
         [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>,
         <music21.abcFormat.ABCNote 'C2'>]
@@ -2670,8 +2686,8 @@ class ABCHandler():
         None None
 
         >>> ah = abcFormat.ABCHandler()
-        >>> header, voices = ah.process('L:1/2\nK:C\nC2 | FC || CB|\nK:G\n|FA')
-        >>> mhl = voices[0].splitByMeasure()
+        >>> abcTune = ah.process('L:1/2\nK:C\nC2 | FC || CB|\nK:G\n|FA')
+        >>> mhl = abcTune.voices[0].splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
         [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>, <music21.abcFormat.ABCNote 'C2'>]
         [<music21.abcFormat.ABCNote 'F'>, <music21.abcFormat.ABCNote 'C'>]
@@ -2685,8 +2701,8 @@ class ABCHandler():
 
 
         >>> ah = abcFormat.ABCHandler()
-        >>> header, voices = ah.process('L:1/2\nK:C\nCG | FC | C[K:G] F')
-        >>> mhl = voices[0].splitByMeasure()
+        >>> abcTune = ah.process('L:1/2\nK:C\nCG | FC | C[K:G] F')
+        >>> mhl = abcTune.voices[0].splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
         [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>, <music21.abcFormat.ABCKey 'K:C'>,
         <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
@@ -2698,13 +2714,12 @@ class ABCHandler():
         <music21.abcFormat.ABCBar '|'> None
 
         >>> ah = abcFormat.ABCHandler()
-        >>> header, voices = ah.process('L:1/2\nK:C\nCG ||FA||')
-        >>> mhl = voices[0].splitByMeasure()
+        >>> abcTune = ah.process('L:1/2\nK:C\nCG ||FA||')
+        >>> mhl = abcTune.voices[0].splitByMeasure()
         >>> for mh in mhl: print (mh.leftBarToken, mh.rightBarToken)
         None <music21.abcFormat.ABCBar '||'>
         <music21.abcFormat.ABCBar '||'> <music21.abcFormat.ABCBar '||'>
         '''
-        from itertools import zip_longest
 
         def split_tokens(tokens):
             # yields ABCHandlerBars or ABCBar tokens
@@ -2771,14 +2786,17 @@ class ABCHandler():
 
         return barHandler
 
-    def process(self, src: Optional[str]=None) -> List['ABCHandlerVoice']:
+    def process(self, src: Optional[str]=None) -> ABCTune:
         if src:
             self.tokenize(src)
 
         # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
         # Do not process tokens)
-        header, voices = self.splitByVoice()
-        return header, [ voice.process() for voice in voices ]
+        abcTune = self.splitByVoice()
+        for voice in abcTune.voices:
+            voice.process()
+
+        return abcTune
 
 
 class ABCHandlerVoice(ABCHandler):
@@ -2792,6 +2810,7 @@ class ABCHandlerVoice(ABCHandler):
         # Do not process tokens
         self.tokens = list(ABCTokenProcessor().process(self))
         return self
+
 
 class ABCHandlerBar(ABCHandler):
     '''
@@ -2838,6 +2857,7 @@ class ABCHandlerBar(ABCHandler):
 
         return ah
 
+
 class ABCTokenProcessor():
     '''
     An ABCHandler for tokens of a an abc voice.
@@ -2874,7 +2894,6 @@ class ABCTokenProcessor():
         # On this Note, starts the last known lyric line(s)
         self.lastLyricNote: Optional[ABCGeneralNote] = None
         self.handler: ABCHandlerVoice = None
-        self.lastOctaveTransposition = None
         self.accidentalPropagation = self._accidental_propagation()
 
 
@@ -3020,8 +3039,8 @@ class ABCTokenProcessor():
     def process_ABCVoice(self, token: ABCVoice):
         self.lastLyricNote = None
         # collect relevant abcVoice tokens
-        if token.voiceId== self.handler.voiceId or token.voiceId == '*':
-            return token
+        #if token.voiceId== self.handler.voiceId or token.voiceId == '*':
+        #    return token
 
     def process_ABCInstruction(self, token: ABCInstruction):
         if token.key:
@@ -3729,7 +3748,7 @@ if __name__ == '__main__':
     # sys.arg test options will be used in mainTest()
     with pathlib.Path('Unendliche_Freude.abc').open() as f:
         avem = f.read()
-    #with pathlib.Path('tests/cleftest.abc').open() as f:
+    #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()
 
     s = music21.converter.parse(avem, forceSource=True, format='abc')
