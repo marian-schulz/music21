@@ -336,9 +336,9 @@ class ABCDecoration(ABCToken):
     """
     ABCDecoration is a factory class for ABCArticulation & ABCExpression
     """
-    TOKEN_REGEX = '!.*?!|[\.]'
+    #TOKEN_REGEX = '!.*?!|[\.]'
 
-    def __new__(cls, src: str):
+    def __call__(self, src: str):
         """
         Instead of an ABCDecoration object, an ABCExpression, ABCArticulation
         or ABCMark is returned. It use the mapping M21_DECORATIONS and implements
@@ -353,17 +353,15 @@ class ABCDecoration(ABCToken):
         """
         map_key = src.strip('!').strip('+')
         try:
-
             decoration_class = M21_DECORATIONS[map_key]
+            if isinstance(decoration_class, ABCAnnotations):
+                return decoration_class
             if issubclass(decoration_class, articulations.Articulation):
                 return ABCArticulation(src, decoration_class)
-
             elif issubclass(decoration_class, expressions.Expression):
                 return ABCExpression(src, decoration_class)
-
             elif issubclass(decoration_class, repeat.RepeatMark):
                 return ABCMark(src, decoration_class)
-
             elif issubclass(decoration_class, ABCToken):
                 return decoration_class(src)
 
@@ -371,7 +369,7 @@ class ABCDecoration(ABCToken):
 
         except KeyError:
             if map_key in "12345":
-                return ABCFingering(map_key)
+                return ABCArticulation(map_key, articulations.Fingering)
             if map_key in ['p', 'pp', 'ppp', 'pppp', 'f', 'ff', 'fff',
                            'ffff', 'mp', 'mf', 'sfz']:
                 return ABCDynamic(src)
@@ -2170,8 +2168,11 @@ class ABCChord(ABCGeneralNote):
         return c
 
 
-TOKEN_SPEC: Dict[str, Tuple[str, Optional[Callable]]] = {'COMMENT': ('%(?=[^%]).*$', None),
-                                                         'LINE_CONTINUE': (r'\\n', None)}
+TOKEN_SPEC: Dict[str, Tuple[str, Optional[Callable]]] = {
+    'COMMENT': ('%(?=[^%]).*$', None),
+    'LINE_CONTINUE': (r'\\n', None),
+    'ABCDecoration': (r'!.*?!|[\.]', ABCDecoration() )
+}
 
 
 def registerToken(token_class: Type[ABCToken], recursive: bool = True):
@@ -2996,6 +2997,7 @@ class ABCTokenProcessor():
             self.lastLyricNote = token
 
         self.lastNoteToken = token
+        return token
 
     def process_ABCGraceStart(self, token: ABCGraceStart):
         """
@@ -3692,11 +3694,12 @@ _DOC_ORDER = [ABCFile, ABCHandler, ABCHandlerBar]
 if __name__ == '__main__':
     import music21
 
+    #benchmark()
     #music21.mainTest(Test)
     # us = environment.UserSettings()
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
-    with pathlib.Path('Unendliche_Freude.abc').open() as f:
+    with pathlib.Path('avemaria.abc').open() as f:
         avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()
