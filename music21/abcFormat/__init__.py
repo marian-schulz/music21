@@ -293,14 +293,6 @@ class ABCDimStart(ABCSpanner):
         self._spannerObj = dynamics.Diminuendo()
 
 
-class ABCFingering(ABCArticulation):
-    def __init__(self, src: str):
-        super().__init__(src, articulations.Fingering)
-
-    def m21Object(self):
-        return self.m21Class(self.src)
-
-
 class ABCParenStop(ABCToken):
     TOKEN_REGEX = r'\)'
 
@@ -1076,6 +1068,7 @@ class ABCLyrics(ABCMetadata):
         super().__init__(src)
         src = " ".join(s[2:].strip(r'\\') for s in src.split('\n'))
         self.syllables = [s for s in RE_ABC_LYRICS.findall(src)]
+
 
 class ABCDirective(ABCToken):
     """
@@ -2143,7 +2136,7 @@ class ABCChord(ABCGeneralNote):
 
         return self.lengthModifier * self.brokenRyhtmModifier * self._first_note.quarterLength(defaultQuarterLength)
 
-    def m21Object(self, octave_transposition: int=0) -> 'music21.chord.Chord':
+    def m21Object(self, octave_transposition: int=0) -> Optional['music21.chord.Chord']:
         """
             Get a music21 chord object
             QuarterLength, ties, articulations, expressions, grace,
@@ -3174,49 +3167,6 @@ class ABCTokenProcessor():
             except StopIteration:
                 # replace tokens with the collected tokens
                 break
-
-
-def mergeLeadingMetaData(barHandlers: List[ABCHandlerBar]) -> List[ABCHandlerBar]:
-    '''
-    Given a list of ABCHandlerBar objects, return a list of ABCHandlerBar
-    objects where leading metadata is merged, if possible,
-    with the bar data following.
-
-    This consolidates all metadata in bar-like entities.
-    '''
-    mCount = 0
-    metadataPos = []  # store indices of handlers that are all metadata
-    for i in range(len(barHandlers)):
-        if barHandlers[i].hasNotes():
-            mCount += 1
-        else:
-            metadataPos.append(i)
-    # environLocal.printDebug(['mergeLeadingMetaData()',
-    #                        'metadataPosList', metadataPos, 'mCount', mCount])
-    # merge meta data into bars for processing
-    mergedHandlers = []
-    if mCount <= 1:  # if only one true measure, do not create measures
-        ahb = ABCHandlerBar()
-        for h in barHandlers:
-            ahb += h  # concatenate all
-        mergedHandlers.append(ahb)
-    else:
-        # when we have metadata, we need to pass its tokens with those
-        # of the measure that follows it; if we have trailing meta data,
-        # we can pass but do not create a measure
-        i = 0
-        while i < len(barHandlers):
-            # if we find metadata and it is not the last valid index
-            # merge into a single handler
-            if i in metadataPos and i != len(barHandlers) - 1:
-                mergedHandlers.append(barHandlers[i] + barHandlers[i + 1])
-                i += 2
-            else:
-                mergedHandlers.append(barHandlers[i])
-                i += 1
-
-    return mergedHandlers
-
 
 # ------------------------------------------------------------------------------
 
