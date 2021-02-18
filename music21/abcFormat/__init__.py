@@ -1044,8 +1044,9 @@ class ABCMeter(ABCMetadata):
 RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
 
 class ABCLyrics(ABCMetadata):
-    TOKEN_REGEX = r'^\s*w:.*((([\][\n]w)|([\n][+])):.*)*'
-
+    #TOKEN_REGEX = r'(w:.*[\n])+'
+    TOKEN_REGEX = r'^\s*w:.*(([\\][\n]w:.*)|([\n][+]:.*))+[\n]|^\s*w:.*'
+    #TOKEN_REGEX = r'^\s*w:.*(([\\][\n]w:.*)|([\n][+]:.*))*[\n]'
     def __init__(self, src: str):
         r'''
         >>> abc = ('w: ||A- ve Ma- ri- -\\\nw: |a! Jung- - - frau *|')
@@ -1064,6 +1065,8 @@ class ABCLyrics(ABCMetadata):
         ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
         '''
         super().__init__(src)
+        # Split am \n, ist das letze zeichen der Zeile ein \ füge sie mit der nächsten zeile wieder zusammen
+        #src = src.split('\n')
         src = " ".join(s[2:].strip(r'\\') for s in src.split('\n'))
         self.syllables = [s for s in RE_ABC_LYRICS.findall(src)]
 
@@ -1552,7 +1555,7 @@ class ABCChordSymbol(ABCMark):
     '''
     A chord symbol
     '''
-    TOKEN_REGEX = r'"[^\^<>_@][^"]*"'
+    TOKEN_REGEX = r'"[^\^<>_@"][^"]*"'
 
     def __init__(self, src):
         src = src[1:-1].strip()
@@ -2428,8 +2431,9 @@ class ABCHandler():
         voiceHandler = []
         # Create a new Handler for each voice with the header tokens first.
         for voiceId , tokens in voices.items():
+            voice_header = [t for t in header if t.tag in "LKM"]
             vh = ABCHandlerVoice(voiceId=voiceId,
-                                 tokens=header + tokens,
+                                 tokens=voice_header + tokens,
                                  abcVersion=self.abcVersion)
             if vh.hasNotes():
                 voiceHandler.append(vh)
@@ -2933,7 +2937,7 @@ class ABCTokenProcessor():
         """
         self.process_ABCGeneralNote(token)
         token.carriedAccidentals = self.carriedAccidentals
-        cp = ABCTokenProcessor()
+        cp = ABCTokenProcessor(abcVersion=self.abcVersion)
 
         cp.carriedAccidentals = self.carriedAccidentals
         cp.lastKeySignature = self.lastKeySignature
@@ -3035,7 +3039,7 @@ class ABCTokenProcessor():
         self.lastLyricNote = None
         # collect relevant abcVoice tokens
         #if token.voiceId== self.handler.voiceId or token.voiceId == '*':
-        #    return token
+        return token
 
     def process_ABCInstruction(self, token: ABCInstruction):
         if token.key:
@@ -3700,6 +3704,7 @@ if __name__ == '__main__':
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
     with pathlib.Path('avemaria.abc').open() as f:
+    #with pathlib.Path('Unendliche_Freude.abc').open() as f:
         avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()

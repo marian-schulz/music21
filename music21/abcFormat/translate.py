@@ -70,13 +70,13 @@ def assign_lyrics(lyrics: List['abcFormat.ABCLyrics'], target: stream.Stream):
     """
     Assign the syllables of multiple verses to the notes of a stream
     """
+    #breakpoint()
     for verse_number, verse in enumerate(lyrics):
         verse = verse.syllables
         if verse:
             # look at the first syllable and skip the measure on '|'
             if verse[0] == '|':
                 verse.pop(0)
-                continue
         else:
             continue
 
@@ -224,10 +224,18 @@ class ABCTokenTranslator(ABCTranslator):
         return ks
 
     def translate_ABCVoice(self, token: 'abcFormat.ABCVoice'):
-        if token.octave is not None:
-            self.octave_transposition = token.octave
 
-        return token.clef
+        if token.voiceId == '*':
+            environLocal.printDebug(['Void "*" found in body context'])
+        else:
+            if token.name:
+                self.parent.partName = token.name
+            if token.subname:
+                self.parent.partAbbreviation = token.subname
+            if token.octave is not None:
+                self.octave_transposition = token.octave
+
+            return token.clef
 
     #def translate_ABCTempo(self, token: 'abcFormat.ABCTempo'):
     #    return token.getMetronomeMarkObject()
