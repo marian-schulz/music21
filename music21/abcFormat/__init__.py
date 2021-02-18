@@ -109,10 +109,36 @@ ABC_BARS = [
 # store a mapping of ABC representation to pitch values
 _pitchTranslationCache = {}
 
+# Misc constants
+METADATA_TEXT_TYPE_FIELDS = 'ABCDCGHNORSTWwZ'
+METADATA_INLINE_FIELDS = 'IKLMmNPQRrUV'
+
 # ------------------------------------------------------------------------------
 # note inclusion of w: for lyrics
 RE_ABC_NOTE = re.compile(r'([\^_=]*)([A-Ga-gz])([0-9/\',]*)')
 RE_ABC_VERSION = re.compile(r'(?:((^[^%].*)?[\n])*%abc-)(\d+)\.(\d+)\.?(\d+)?')
+RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
+
+def makeMetaDataRegexpr(tag: str):
+    """
+    Creates a regular expression for ABCMetadata token class.
+
+    """
+    tag = tag[0]
+
+    if tag in METADATA_TEXT_TYPE_FIELDS:
+        regex = [f'^\s*{tag}:.*([\\][\n]{tag}:.*)+[\n]',
+                 f'^\s*{tag}:.*([\n]+:.*)+[\n]']
+    else:
+        regex = []
+
+    regex.append(rf'^\s*{tag}:.*[\n]')
+
+    if tag in METADATA_INLINE_FIELDS:
+        regex.append(rf'\[{tag}:[^\]\n%]*\]')
+
+    return "|".join(regex)
+
 
 # Type aliases
 ABCVersion = Tuple[int, int, int]
@@ -378,36 +404,65 @@ class ABCDecoration(ABCToken):
 
 from music21 import clef
 
+
 class ABCMetadata(ABCToken):
 
-    TOKEN_REGEX = r'^\s*[ABDFGHmNPRrSsWZ]:.*$|\[[mnPRr]:[^\]\n%]*\]'
+    TOKEN_REGEX = '^[BADFGHZmrR]:.*'
 
     def __init__(self, src):
         super().__init__(src)
+
         if src.startswith('['):
             self.inlined = True
             src = src[1:-1]
         else:
             self.inlined = False
 
+        # split tag and trailing data
         src = src.split(':', 1)
         self.tag: str = src[0].strip()
-        # remove comments
+        data = src[1]
 
-        self.data: str = src[1].split('%', 1)[0].strip()
+        # special treatment for text fields (if not inlined)
+        if not self.inlined and self.tag in METADATA_TEXT_TYPE_FIELDS:
+            # Text fields can contain accents and ligatures
+            data = encodeAccentsAndLigatures(data)
+
+            # Text fields can extend over several lines.
+            # Either by '+:' on the next line or by an '\' on the
+            # end of the line. (Only if the next line has the same tag).
+            _data = []
+            for line in data.split('\n'):
+                # remove line continuation charakter
+                # and leading white spaces
+                line = line.rstrip(r'\\').lstrip()
+
+                # remove tag
+                line = line[2:]
+                # remove comments in each line and trailing whitespace
+                line = line.split('%', 1)[0].strip()
+                _data.append(line)
+
+            # join the line to one line seperated by a whitespace
+            data = " ".join(_data)
+        else:
+            # remove comments and trailing whitespace
+            data = src[1].split('%', 1)[0].strip()
+
+        self.data: str = data
 
 
 class ABCReferenceNumber(ABCMetadata):
-    TOKEN_REGEX = r'^X:.*$'
+    TOKEN_REGEX = makeMetaDataRegexpr('X')
 
 class ABCTitle(ABCMetadata):
-    TOKEN_REGEX = r'^\s*T:.*$'
+    TOKEN_REGEX = makeMetaDataRegexpr('T')
 
 class ABCOrigin(ABCMetadata):
-    TOKEN_REGEX = r'^\s*O:.*$'
+    TOKEN_REGEX = makeMetaDataRegexpr('O')
 
 class ABCComposer(ABCMetadata):
-    TOKEN_REGEX = r'^\s*C:.*$'
+    TOKEN_REGEX = makeMetaDataRegexpr('C')
 
 class ABCUnitNoteLength(ABCMetadata):
     r"""
@@ -421,7 +476,7 @@ class ABCUnitNoteLength(ABCMetadata):
     >>> am.defaultQuarterLength
     0.5
     """
-    TOKEN_REGEX = r'^\s*L:.*$'
+    TOKEN_REGEX = makeMetaDataRegexpr('L')
 
     def __init__(self, src):
         super().__init__(src)
@@ -532,7 +587,7 @@ class ABCClef():
 VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*(".*?"|\S+)(?!\S))|(?P<subname>(subname|snm|sname)\s*=\s*(".*?"|\S+)(?!\S))')
 class ABCVoice(ABCMetadata,  ABCClef):
 
-    TOKEN_REGEX = r'^\s*V:.*$|\[V:[^\]\n%]*\]'
+    TOKEN_REGEX = makeMetaDataRegexpr('V')
 
     def __init__(self, src):
         r"""
@@ -571,7 +626,7 @@ class ABCTempo(ABCMetadata):
     >>> am.getMetronomeMarkObject()
     <music21.tempo.MetronomeMark Allegro Quarter=120.0>
     """
-    TOKEN_REGEX = r'^\s*Q:.*$|\[Q:[^\]\n%]*\]'
+    TOKEN_REGEX = makeMetaDataRegexpr('Q')
 
     def __init__(self, src):
         super().__init__(src)
@@ -671,7 +726,7 @@ class ABCUserDefinition(ABCMetadata):
     >>> v.definition
     '.u'
     """
-    TOKEN_REGEX = r'^\s*U:.*$|\[U:[^\]\n%]*\]'
+    TOKEN_REGEX = makeMetaDataRegexpr('U')
 
     def __init__(self, src):
         super().__init__(src)
@@ -732,7 +787,7 @@ class ABCKey(ABCMetadata, ABCClef):
     <music21.clef.TrebleClef>
     """
 
-    TOKEN_REGEX = r'^\s*K:.*$|\[K:[^\]\n%]*\]'
+    TOKEN_REGEX = makeMetaDataRegexpr('K')
 
     def __init__(self, src: str):
         super().__init__(src)
@@ -915,7 +970,7 @@ class ABCInstruction(ABCMetadata):
     >>> i.instruction
     'pitch'
     """
-    TOKEN_REGEX = r'^\s*I:.*$|\[I:[^\]\n%]*\]'
+    TOKEN_REGEX = makeMetaDataRegexpr('I')
 
     def __init__(self, src: str):
         super().__init__(src)
@@ -1041,12 +1096,11 @@ class ABCMeter(ABCMetadata):
         return 0.25 if self.ratio < 0.75 else 0.5
 
 
-RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
-
+from music21.abcFormat.accents import encodeAccentsAndLigatures
 class ABCLyrics(ABCMetadata):
-    #TOKEN_REGEX = r'(w:.*[\n])+'
-    TOKEN_REGEX = r'^\s*w:.*(([\\][\n]w:.*)|([\n][+]:.*))+[\n]|^\s*w:.*'
-    #TOKEN_REGEX = r'^\s*w:.*(([\\][\n]w:.*)|([\n][+]:.*))*[\n]'
+
+    TOKEN_REGEX = makeMetaDataRegexpr('w')
+
     def __init__(self, src: str):
         r'''
         >>> abc = ('w: ||A- ve Ma- ri- -\\\nw: |a! Jung- - - frau *|')
@@ -1067,8 +1121,9 @@ class ABCLyrics(ABCMetadata):
         super().__init__(src)
         # Split am \n, ist das letze zeichen der Zeile ein \ füge sie mit der nächsten zeile wieder zusammen
         #src = src.split('\n')
-        src = " ".join(s[2:].strip(r'\\') for s in src.split('\n'))
-        self.syllables = [s for s in RE_ABC_LYRICS.findall(src)]
+        #src = [s.rstrip(r'\\').lstrip('w:') for s in self.data.split('\n')]
+        #src = " ".join(src)
+        self.syllables = [s for s in RE_ABC_LYRICS.findall(self.data)]
 
 
 class ABCDirective(ABCToken):
@@ -1805,7 +1860,7 @@ class ABCGeneralNote(ABCToken):
 
 
 class ABCRest(ABCGeneralNote):
-    TOKEN_REGEX = r'[zZx][0-9/]*'
+    TOKEN_REGEX = r'[zZx][0-9/]*(?!:)'
 
     def __init__(self, src):
         super().__init__(src, length=src[1:])
@@ -3703,8 +3758,8 @@ if __name__ == '__main__':
     # us = environment.UserSettings()
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
-    with pathlib.Path('avemaria.abc').open() as f:
-    #with pathlib.Path('Unendliche_Freude.abc').open() as f:
+    #with pathlib.Path('avemaria.abc').open() as f:
+    with pathlib.Path('Unendliche_Freude.abc').open() as f:
         avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()

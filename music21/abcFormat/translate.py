@@ -201,7 +201,7 @@ class ABCTokenTranslator(ABCTranslator):
         super().__init__()
         self.parent = parent
         self.octave_transposition = None
-        self.lyrics = []
+        self.lyrics: 'abcFormat.ABCLyrics' = []
 
 
     def translate(self, handler: 'abcFormat.ABCVoiceHandler',
@@ -244,8 +244,10 @@ class ABCTokenTranslator(ABCTranslator):
     def translate_ABCGeneralNote(self, token: 'abcFormat.ABCGeneralNote'):
         # set new lyrics
         if token.lyrics:
-            if self.lyrics:
-                environLocal.printDebug(['There are unassigned lyrics.'])
+            for index, verse in enumerate(self.lyrics, start=1):
+                if verse.syllables:
+                    environLocal.printDebug([f'There are unassigned lyrics in verse #{index}.', verse.syllables])
+
             self.lyrics = token.lyrics
 
         return token.m21Object(octave_transposition=self.octave_transposition)
