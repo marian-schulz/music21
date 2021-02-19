@@ -127,12 +127,12 @@ def makeMetaDataRegexpr(tag: str):
     tag = tag[0]
 
     if tag in METADATA_TEXT_TYPE_FIELDS:
-        regex = [f'^\s*{tag}:.*([\\][\n]{tag}:.*)+[\n]',
-                 f'^\s*{tag}:.*([\n]+:.*)+[\n]']
+        regex = [fr'^\s*{tag}:.*([\\][\n]{tag}:.+)+[\n]',
+                 fr'^\s*{tag}:.*([\n]+:.+)+[\n]']
     else:
         regex = []
 
-    regex.append(rf'^\s*{tag}:.*[\n]')
+    regex.append(rf'^\s*{tag}:.*')
 
     if tag in METADATA_INLINE_FIELDS:
         regex.append(rf'\[{tag}:[^\]\n%]*\]')
@@ -421,7 +421,7 @@ class ABCMetadata(ABCToken):
         # split tag and trailing data
         src = src.split(':', 1)
         self.tag: str = src[0].strip()
-        data = src[1]
+        data = src[1].strip()
 
         # special treatment for text fields (if not inlined)
         if not self.inlined and self.tag in METADATA_TEXT_TYPE_FIELDS:
@@ -431,14 +431,15 @@ class ABCMetadata(ABCToken):
             # Text fields can extend over several lines.
             # Either by '+:' on the next line or by an '\' on the
             # end of the line. (Only if the next line has the same tag).
-            _data = []
-            for line in data.split('\n'):
+            lines = data.split('\n')
+            # for the first line the tag is already speperated
+            _data = [lines[0].rstrip(r'\\').lstrip()]
+            for line in lines[1:]:
+                # remove leading tag
+                line = line.split(':', 1)[1]
                 # remove line continuation charakter
                 # and leading white spaces
                 line = line.rstrip(r'\\').lstrip()
-
-                # remove tag
-                line = line[2:]
                 # remove comments in each line and trailing whitespace
                 line = line.split('%', 1)[0].strip()
                 _data.append(line)
@@ -451,9 +452,13 @@ class ABCMetadata(ABCToken):
 
         self.data: str = data
 
-
 class ABCReferenceNumber(ABCMetadata):
     TOKEN_REGEX = makeMetaDataRegexpr('X')
+    def __init__(self, src):
+        super().__init__(src)
+        x, _ = common.getNumFromStr(self.data)
+        self.data = int(self.data)
+
 
 class ABCTitle(ABCMetadata):
     TOKEN_REGEX = makeMetaDataRegexpr('T')
@@ -686,6 +691,7 @@ class ABCTempo(ABCMetadata):
         if nonText:
             if '=' in nonText:
                 durs, number = nonText.split('=')
+                durs = durs.strip()
                 number = float(number)
                 # there may be more than one dur divided by a space
                 referent = 0.0  # in quarter lengths
@@ -1136,6 +1142,14 @@ class ABCDirective(ABCToken):
     def __new__(cls, src: str):
         return ABCInstruction(f'I:{src}')
 
+class ABCVoiceOverlay(ABCToken):
+    TOKEN_REGEX = '&'
+    def __init__(self, src):
+        super().__init__(src)
+        self.handler : 'ABCHandlerVoiceOverlay' = ABCHandlerVoiceOverlay()
+
+    def append(self, token: ABCToken):
+        self.handler.tokens.append(token)
 
 class ABCSymbol(ABCToken):
     """
@@ -1689,8 +1703,8 @@ class ABCGeneralNote(ABCToken):
         # provided key signature from handler
         self.keySignature: Optional['music21.key.KeySignature'] = None
 
-    @classmethod
-    def _parse_abc_length(self, src: str) -> float:
+    @staticmethod
+    def _parse_abc_length(src: str) -> float:
         '''
         Parse a abc length string.
 
@@ -2445,9 +2459,10 @@ class ABCHandler():
         'D3', 'D3', '|', 'D6', '|', 'D3', 'D3', '|', 'D6', '||']
         """
         activeVoice = []
+        lastOverlayToken : ABCVoiceOverlay = None
+
         voices = {'1': activeVoice}
         tokenIter = iter(self.tokens)
-
         header = []
         for token in tokenIter:
             if isinstance(token, ABCMetadata):
@@ -2481,14 +2496,27 @@ class ABCHandler():
                     activeVoice = []
                     voices[token.voiceId] = activeVoice
 
-            activeVoice.append(token)
+                lastOverlayToken = None
+
+            elif isinstance(token, ABCBar):
+                lastOverlayToken = None
+
+            elif isinstance(token, ABCVoiceOverlay):
+                lastOverlayToken = token
+                activeVoice.append(token)
+                continue
+
+            if lastOverlayToken:
+                lastOverlayToken.append(token)
+            else:
+                activeVoice.append(token)
 
         voiceHandler = []
         # Create a new Handler for each voice with the header tokens first.
-        for voiceId , tokens in voices.items():
+        for voiceId , voiceTokens in voices.items():
             voice_header = [t for t in header if t.tag in "LKM"]
             vh = ABCHandlerVoice(voiceId=voiceId,
-                                 tokens=voice_header + tokens,
+                                 tokens=voice_header + voiceTokens,
                                  abcVersion=self.abcVersion)
             if vh.hasNotes():
                 voiceHandler.append(vh)
@@ -2861,9 +2889,21 @@ class ABCHandlerVoice(ABCHandler):
     def process(self) -> 'ABCHandlerVoice':
         # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
         # Do not process tokens
-        self.tokens = list(ABCTokenProcessor().process(self))
+        tokenProcessor = ABCTokenProcessor()
+        self.tokens = list(tokenProcessor.process(self))
         return self
 
+class ABCHandlerVoiceOverlay(ABCHandler):
+    # tokens are ABC objects in a linear stream
+    def __init__(self, abcVersion: Optional[ABCVersion]=None):
+        super().__init__(abcVersion=abcVersion)
+        self.overlayId = 0
+
+    def process(self, tokenProcessor: 'ABCTokenProcessor') -> 'ABCHandlerVoice':
+        # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
+        # Do not process tokens
+        self.tokens = list(tokenProcessor.process(self))
+        return self
 
 class ABCHandlerBar(ABCHandler):
     '''
@@ -2949,6 +2989,9 @@ class ABCTokenProcessor():
         self.handler: ABCHandlerVoice = None
         self.accidentalPropagation = self._accidental_propagation()
 
+        # Use an extra Overlay Proccesor for voice Overlays
+        self.overlayCounter = 0
+        self.overlayProcessors: List[ABCTokenProcessor] = []
 
     def _accidental_propagation(self) -> str:
         '''
@@ -2974,9 +3017,11 @@ class ABCTokenProcessor():
           Process ABCArticulation tokens
         """
         self.lastArticulations.append(token)
+        self.overlayCounter = 0
 
     def process_ABCBar(self, token: ABCBar):
         self.carriedAccidentals = {}
+        self.overlayCounter = 0
         return token
 
     def process_ABCBrokenRhythm(self, token: ABCBrokenRhythm):
@@ -3168,6 +3213,27 @@ class ABCTokenProcessor():
         self.lastTupletToken = token
         return token
 
+    def process_ABCVoiceOverlay(self, token: ABCVoiceOverlay):
+        # Count the overly tokens in a bar
+        self.overlayCounter += 1
+        if self.overlayCounter > len(self.overlayProcessors):
+            overlayProcessor = ABCTokenProcessor(abcVersion=self.abcVersion)
+            overlayProcessor.abcDirectives = self.abcDirectives
+            overlayProcessor.userDefinedSymbols = self.userDefinedSymbols
+            self.overlayProcessors.append(overlayProcessor)
+        else:
+            overlayProcessor = self.overlayProcessors[self.overlayCounter]
+
+        # update relevant context to the overlay TokenProcessor
+        overlayProcessor.lastDefaultQL = self.lastDefaultQL
+        overlayProcessor.lastKeySignature = self.lastKeySignature
+        overlayProcessor.lastTimeSignatureObj = self.lastTimeSignatureObj
+        overlayProcessor.carriedAccidentals = {}
+        token.handler.overlayId = f'{self.handler.voiceId}_{self.overlayCounter}'
+        token.handler.process(overlayProcessor)
+
+        return token
+
     def process(self, handler: ABCHandlerVoice) -> Iterator[ABCToken]:
         '''
         Process all token objects any supply contextual informations.
@@ -3228,6 +3294,8 @@ class ABCTokenProcessor():
             except StopIteration:
                 # replace tokens with the collected tokens
                 break
+
+
 
 # ------------------------------------------------------------------------------
 
@@ -3759,7 +3827,8 @@ if __name__ == '__main__':
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
     #with pathlib.Path('avemaria.abc').open() as f:
-    with pathlib.Path('Unendliche_Freude.abc').open() as f:
+    #with pathlib.Path('Unendliche_Freude.abc').open() as f:
+    with pathlib.Path('Magnificat.abc').open() as f:
         avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()

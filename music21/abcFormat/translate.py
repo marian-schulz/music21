@@ -179,7 +179,7 @@ class ABCHeaderTranslator(ABCTranslator):
 
     def translate_ABCReferenceNumber(self, token: 'abcFormat.ABCReferenceNumber'):
         # Convert referenceNumber to a number string
-        self.metadata.number, _ = common.getNumFromStr(token.data)
+        self.metadata.number = token.data
 
     def translate_ABCMeter(self, token: 'abcFormat.ABCMeter'):
         self.abcMeter = token
@@ -259,6 +259,14 @@ class ABCTokenTranslator(ABCTranslator):
         m21object = token.m21Object()
         if m21object:
             self.parent.coreInsert(0, m21object)
+
+    def translate_ABCVoiceOverlay(self, token: 'abcFormat.ABCVoiceOverlay'):
+        voiceStream = stream.Voice(id=token.handler.overlayId)
+        overlayTranslator = ABCTokenTranslator(self.parent)
+        overlayTranslator.octave_transposition = self.octave_transposition
+        overlayTranslator.translate(token.handler, voiceStream)
+        self.m21Target.insert(0, voiceStream)
+
 
 
 def abcToStreamMeasure(voiceHandler: 'abcFormat.ABCHandlerVoice', m21Part: stream.Part, translator: ABCTokenTranslator):
