@@ -265,7 +265,8 @@ class ABCTokenTranslator(ABCTranslator):
         overlayTranslator = ABCTokenTranslator(self.parent)
         overlayTranslator.octave_transposition = self.octave_transposition
         overlayTranslator.translate(token.handler, voiceStream)
-        self.m21Target.insert(0, voiceStream)
+        return voiceStream
+        #self.m21Target.insert(0, voiceStream)
 
 
 
