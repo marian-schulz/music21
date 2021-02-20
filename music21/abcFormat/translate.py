@@ -61,7 +61,7 @@ def get_instrument(instruction: str) -> Tuple[str, int]:
                 voiceId = voiceId.strip()
             midiProgram = int(gd['instrument'].strip())
         else:
-            raise ABCTranslateException(f'Invalid midi instruction: "{instruction}"')
+            raise ABCTranslateException(f'Unknown midi instruction: "{instruction}"')
 
     return voiceId, midiProgram
 
@@ -192,8 +192,11 @@ class ABCHeaderTranslator(ABCTranslator):
 
     def translate_ABCInstruction(self, token: 'abcFormat.ABCInstruction'):
         if token.key.lower() == 'midi':
-            voiceId, m21Instrument = get_instrument(token.instruction)
-            self.midi[voiceId] = m21Instrument
+            try:
+                voiceId, m21Instrument = get_instrument(token.instruction)
+                self.midi[voiceId] = m21Instrument
+            except ABCTranslateException as e:
+                environLocal.printDebug([e])
 
 class ABCTokenTranslator(ABCTranslator):
 
@@ -388,14 +391,6 @@ def abcToStreamMeasure(voiceHandler: 'abcFormat.ABCHandlerVoice', m21Part: strea
     except (ABCTranslateException, meter.MeterException, ZeroDivisionError):
         pass
 
-    # Create beams
-    if m21Part.recurse().getElementsByClass('TimeSignature'):
-        # call make beams for now; later, import beams
-        # environLocal.printDebug(['abcToStreamPart: calling makeBeams'])
-        try:
-            m21Part.makeBeams(inPlace=True)
-        except (meter.MeterException, stream.StreamException) as e:
-            environLocal.warn(f'Error in beaming...ignoring: {e}')
 
 
 def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice', tuneHeader: ABCHeaderTranslator,
@@ -469,6 +464,15 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice', tuneHeader: ABCHe
         abcToStreamMeasure(voiceHandler=voiceHandler, m21Part=m21Part, translator=translator)
 
     m21Part.coreElementsChanged()
+    # Create beams
+    if hasMeasures and m21Part.recurse().getElementsByClass('TimeSignature'):
+        # call make beams for now; later, import beams
+        # environLocal.printDebug(['abcToStreamPart: calling makeBeams'])
+        try:
+            m21Part.makeBeams(inPlace=True)
+        except (meter.MeterException, stream.StreamException) as e:
+            environLocal.warn(f'Error in beaming...ignoring: {e}')
+
     return m21Part
 
 
@@ -537,6 +541,9 @@ def abcToStreamOpus(abcHandler, inputM21=None, number=None):
                     scoreList.append(abcToStreamScore(abcDict[key]))
                 except IndexError:
                     environLocal.warn(f'Failure for piece number {key}')
+                except abcFormat.ABCHandlerException:
+                     breakpoint()
+
             for scoreDocument in scoreList:
                 opus.coreAppend(scoreDocument, setActiveSite=False)
             opus.coreElementsChanged()

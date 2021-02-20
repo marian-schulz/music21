@@ -60,6 +60,7 @@ import re
 import unittest
 from typing import Union, Optional, List, Tuple, Type, Dict, Callable, Iterator, NamedTuple
 import itertools
+import functools
 
 from music21 import common
 from music21 import environment
@@ -70,17 +71,19 @@ from music21 import expressions
 from music21 import dynamics
 from music21 import repeat
 from music21 import meter
-
-
+from music21 import clef
 from music21.abcFormat import translate
 from music21.abcFormat import testFiles
 
-environLocal = environment.Environment('abcFormat')
-
 # for implementation
 # see http://abcnotation.com/abc2mtex/abc.txt
+# AND http://abcnotation.com/wiki/abc:standard:v2.1
 
-# Map ABC Decorations to music21 articulation & expression classes
+environLocal = environment.Environment('abcFormat')
+
+# Misc constants
+METADATA_TEXT_TYPE_FIELDS = 'ABCDCGHNORSTWwZ'
+METADATA_INLINE_FIELDS = 'IKLMmNPQRrUV'
 
 # store symbol and m21 naming/class eq
 ABC_BARS = [
@@ -100,21 +103,7 @@ ABC_BARS = [
     ('|', 'regular'),
     (':', 'dotted'),
 ]
-
-
-
-
-# Specification & regular expression of a voice metadata field
-
-# store a mapping of ABC representation to pitch values
-_pitchTranslationCache = {}
-
-# Misc constants
-METADATA_TEXT_TYPE_FIELDS = 'ABCDCGHNORSTWwZ'
-METADATA_INLINE_FIELDS = 'IKLMmNPQRrUV'
-
-# ------------------------------------------------------------------------------
-# note inclusion of w: for lyrics
+# Regular Expressions
 RE_ABC_NOTE = re.compile(r'([\^_=]*)([A-Ga-gz])([0-9/\',]*)')
 RE_ABC_VERSION = re.compile(r'(?:((^[^%].*)?[\n])*%abc-)(\d+)\.(\d+)\.?(\d+)?')
 RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
@@ -122,7 +111,6 @@ RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
 def makeMetaDataRegexpr(tag: str):
     """
     Creates a regular expression for ABCMetadata token class.
-
     """
     tag = tag[0]
 
@@ -142,6 +130,7 @@ def makeMetaDataRegexpr(tag: str):
 
 # Type aliases
 ABCVersion = Tuple[int, int, int]
+
 
 
 # ------------------------------------------------------------------------------
@@ -183,32 +172,6 @@ class ABCToken(prebase.ProtoM21Object):
 
     def _reprInternal(self):
         return repr(self.src)
-
-    @staticmethod
-    def stripComment(strSrc):
-        '''
-        removes ABC-style comments from a string:
-
-        >>> ao = abcFormat.ABCToken()
-        >>> ao.stripComment('asdf')
-        'asdf'
-        >>> ao.stripComment('asdf%234')
-        'asdf'
-        >>> ao.stripComment('asdf  %     234')
-        'asdf  '
-        >>> ao.stripComment('[ceg]% this chord appears 50% more often than other chords do')
-        '[ceg]'
-
-        This is a static method, so it can also be called on the class itself:
-
-        >>> abcFormat.ABCToken.stripComment('b1 % a b-flat actually')
-        'b1 '
-
-        Changed: v6.2 -- made a staticmethod
-        '''
-        if '%' in strSrc:
-            return strSrc.split('%')[0]
-        return strSrc
 
     def m21Object(self):
         return None
@@ -358,56 +321,44 @@ M21_DECORATIONS = {
     # '^':                    marcato (inverted V)
 }
 
-class ABCDecoration(ABCToken):
+def ABCDecoration(src):
     """
-    ABCDecoration is a factory class for ABCArticulation & ABCExpression
+    ABCDecoration is a factory function for ABCArticulation & ABCExpression
+    >>> abcFormat.ABCDecoration("!trill!")
+    <music21.abcFormat.ABCExpression '!trill!'>
+    >>> abcFormat.ABCDecoration("!tenuto!")
+    <music21.abcFormat.ABCArticulation '!tenuto!'>
+    >>> abcFormat.ABCDecoration("!ppp!")
+    <music21.abcFormat.ABCDynamic '!ppp!'>
     """
-    #TOKEN_REGEX = '!.*?!|[\.]'
+    map_key = src.strip('!').strip('+')
+    try:
+        decoration_class = M21_DECORATIONS[map_key]
+        if isinstance(decoration_class, ABCAnnotations):
+            return decoration_class
+        if issubclass(decoration_class, articulations.Articulation):
+            return ABCArticulation(src, decoration_class)
+        elif issubclass(decoration_class, expressions.Expression):
+            return ABCExpression(src, decoration_class)
+        elif issubclass(decoration_class, repeat.RepeatMark):
+            return ABCMark(src, decoration_class)
+        elif issubclass(decoration_class, ABCToken):
+            return decoration_class(src)
 
-    def __call__(self, src: str):
-        """
-        Instead of an ABCDecoration object, an ABCExpression, ABCArticulation
-        or ABCMark is returned. It use the mapping M21_DECORATIONS and implements
-        dynamics and fingering as special cases.
+        raise ABCTokenException(f'Unknown type "{decoration_class}" for decoration "{src}"')
 
-        >>> abcFormat.ABCDecoration("!trill!")
-        <music21.abcFormat.ABCExpression '!trill!'>
-        >>> abcFormat.ABCDecoration("!tenuto!")
-        <music21.abcFormat.ABCArticulation '!tenuto!'>
-        >>> abcFormat.ABCDecoration("!ppp!")
-        <music21.abcFormat.ABCDynamic '!ppp!'>
-        """
-        map_key = src.strip('!').strip('+')
-        try:
-            decoration_class = M21_DECORATIONS[map_key]
-            if isinstance(decoration_class, ABCAnnotations):
-                return decoration_class
-            if issubclass(decoration_class, articulations.Articulation):
-                return ABCArticulation(src, decoration_class)
-            elif issubclass(decoration_class, expressions.Expression):
-                return ABCExpression(src, decoration_class)
-            elif issubclass(decoration_class, repeat.RepeatMark):
-                return ABCMark(src, decoration_class)
-            elif issubclass(decoration_class, ABCToken):
-                return decoration_class(src)
-
-            raise ABCTokenException(f'Unknown type "{decoration_class}" for decoration "{src}"')
-
-        except KeyError:
-            if map_key in "12345":
-                return ABCArticulation(map_key, articulations.Fingering)
-            if map_key in ['p', 'pp', 'ppp', 'pppp', 'f', 'ff', 'fff',
-                           'ffff', 'mp', 'mf', 'sfz']:
-                return ABCDynamic(src)
-            raise ABCTokenException(f'Unknown abc decoration "{src}"')
-
-
-from music21 import clef
+    except KeyError:
+        if map_key in "12345":
+            return ABCArticulation(map_key, articulations.Fingering)
+        if map_key in ['p', 'pp', 'ppp', 'pppp', 'f', 'ff', 'fff',
+                       'ffff', 'mp', 'mf', 'sfz']:
+            return ABCDynamic(src)
+        raise ABCTokenException(f'Unknown abc decoration "{src}"')
 
 
 class ABCMetadata(ABCToken):
 
-    TOKEN_REGEX = '^[BADFGHZmrR]:.*'
+    TOKEN_REGEX = '^[BADFGHZmNrRSZ]:.*'
 
     def __init__(self, src):
         super().__init__(src)
@@ -1988,6 +1939,7 @@ class ABCNote(ABCGeneralNote):
 
         return (pitch.upper(), accidental, octave, length)
 
+    #@functools.cached_property
     def getPitchName(self, octave_transposition: int = 0,
                      keySignature: Optional['music21.key.KeySignature'] = None,
                      carriedAccidental: Optional[str] = None) -> Tuple[str, bool]:
@@ -2002,44 +1954,32 @@ class ABCNote(ABCGeneralNote):
 
         octave = self.octave + octave_transposition
 
-        cache_key = (self.pitchClass,
-                     octave,
-                     carriedAccidental,
-                     self.accidental,
-                     str(keySignature)
-                     )
+        if carriedAccidental:
+            active_accidental = carriedAccidental
+        elif keySignature:
+            active_accidental = next((p.accidental.modifier for p in keySignature.alteredPitches
+                                      if p.step == self.pitchClass), None)
+        else:
+            active_accidental = None
 
-        try:
-            return _pitchTranslationCache[cache_key]
-        except KeyError:
-            if carriedAccidental:
-                active_accidental = carriedAccidental
-            elif keySignature:
-                active_accidental = next((p.accidental.modifier for p in keySignature.alteredPitches
-                                          if p.step == self.pitchClass), None)
+        if active_accidental:
+            if not self.accidental:
+                # the abc pitch has no accidental but there is an active accidental
+                accidental, display = active_accidental, False
+            elif self.accidental == active_accidental:
+                # the abc pitch has the same accidental as in active accidentals
+                accidental, display = self.accidental, False
             else:
-                active_accidental = None
-
-            if active_accidental:
-                if not self.accidental:
-                    # the abc pitch has no accidental but there is an active accidental
-                    accidental, display = active_accidental, False
-                elif self.accidental == active_accidental:
-                    # the abc pitch has the same accidental as in active accidentals
-                    accidental, display = self.accidental, False
-                else:
-                    # the abc pitch has an accidental but it is not the same as in the active accidentals
-                    accidental, display = self.accidental, True
-            elif self.accidental:
-                # the abc pitch has an accidental but not a an active accidental
+                # the abc pitch has an accidental but it is not the same as in the active accidentals
                 accidental, display = self.accidental, True
-            else:
-                # the abc pitch has no accidental and no active accidental
-                accidental, display = '', None
+        elif self.accidental:
+            # the abc pitch has an accidental but not a an active accidental
+            accidental, display = self.accidental, True
+        else:
+            # the abc pitch has no accidental and no active accidental
+            accidental, display = '', None
 
-            result = (f'{self.pitchClass}{accidental}{octave}', display)
-            _pitchTranslationCache[cache_key] = result
-            return result
+        return (f'{self.pitchClass}{accidental}{octave}', display)
 
     def m21Object(self, octave_transposition: int = 0) -> Union['music21.note.Note', 'music21.note.Rest']:
         """
@@ -2243,7 +2183,7 @@ class ABCChord(ABCGeneralNote):
 TOKEN_SPEC: Dict[str, Tuple[str, Optional[Callable]]] = {
     'COMMENT': ('%(?=[^%]).*$', None),
     'LINE_CONTINUE': (r'\\n', None),
-    'ABCDecoration': (r'!.*?!|[\.]', ABCDecoration() )
+    'ABCDecoration': (r'!.*?!|[\.]', ABCDecoration)
 }
 
 
@@ -3042,7 +2982,7 @@ class ABCTokenProcessor():
         cp.carriedAccidentals = self.carriedAccidentals
         cp.lastKeySignature = self.lastKeySignature
         cp.lastDefaultQL = self.lastDefaultQL
-        cp.lastOctaveTransposition = self.lastOctaveTransposition
+        #cp.lastOctaveTransposition = self.lastOctaveTransposition
 
         # @TODO: create a ChordProcessor
         token.subTokens = list(cp.process(ABCHandler(token.subTokens)))
@@ -3803,10 +3743,9 @@ class Test(unittest.TestCase):
 
 def import_all_abc():
     import music21
-    af = music21.abcFormat.ABCFile()
     for abc_file in pathlib.Path('../corpus/').glob('**/*.abc'):
         with abc_file.open() as f:
-            af.readstr(f.read())
+            music21.converter.parse(f.read(), forceSource=True, format='abc')
 
 
 def benchmark():
@@ -3821,17 +3760,17 @@ _DOC_ORDER = [ABCFile, ABCHandler, ABCHandlerBar]
 if __name__ == '__main__':
     import music21
 
-    #benchmark()
+    benchmark()
     #music21.mainTest(Test)
     # us = environment.UserSettings()
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
     #with pathlib.Path('avemaria.abc').open() as f:
     #with pathlib.Path('Unendliche_Freude.abc').open() as f:
-    with pathlib.Path('Magnificat.abc').open() as f:
-        avem = f.read()
+    #with pathlib.Path('Magnificat.abc').open() as f:
+    #    avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()
 
-    s = music21.converter.parse(avem, forceSource=True, format='abc')
-    s.show()
+    #s = music21.converter.parse(avem, forceSource=True, format='abc')
+    #s.show()
