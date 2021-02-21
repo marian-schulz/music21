@@ -45,13 +45,15 @@ class ABCTranslateException(exceptions21.Music21Exception):
     pass
 
 MIDI_1_RE = re.compile('voice\s+(?P<voiceID>[0-9]*)\s*instrument\s*=\s*(?P<program>[0-9]+)')
-MIDI_2_RE = re.compile('program(?P<channel>\s+[0-9]+)?(?P<program>\s+[0-9]+)')
+MIDI_2_RE = re.compile('program\s+(?P<channel>[0-9]+)\s+(?P<program>[0-9]+)')
 
-def get_instrument(instruction: str) -> Tuple[str, int]:
+def get_instrument(instruction: str) -> Tuple[Union[str,int], int]:
     match = MIDI_2_RE.match(instruction)
     if match:
         midiProgram = int(match.groupdict()['program'].strip())
-        voiceId = None
+        midiChannel = int(match.groupdict()['channel'].strip())
+        return midiChannel, midiProgram
+
     else:
         match = MIDI_1_RE.match(instruction)
         if match:
@@ -60,10 +62,9 @@ def get_instrument(instruction: str) -> Tuple[str, int]:
             if voiceId is not None:
                 voiceId = voiceId.strip()
             midiProgram = int(gd['instrument'].strip())
+            return voiceId, midiProgram
         else:
             raise ABCTranslateException(f'Unknown midi instruction: "{instruction}"')
-
-    return voiceId, midiProgram
 
 
 def assign_lyrics(lyrics: List['abcFormat.ABCLyrics'], target: stream.Stream):
@@ -80,11 +81,11 @@ def assign_lyrics(lyrics: List['abcFormat.ABCLyrics'], target: stream.Stream):
         else:
             continue
 
-        # start alligning syllable to notes
+        # start aligning syllable to notes
         for n in target.notes:
             if isinstance(n, harmony.ChordSymbol) \
-                or isinstance(n.duration, duration.GraceDuration):
-                # Do not allign syllables to chord symbols, and grace notes
+                          or isinstance(n.duration, duration.GraceDuration):
+                # Do not align syllables to chord symbols, and grace notes
                 continue
 
             if verse:
@@ -145,6 +146,8 @@ class ABCHeaderTranslator(ABCTranslator):
         self.abcKey  = None
         self.abcMeter  = None
         self.tempo = None
+        self.staffGroups = []
+        self.staveUnions = {}
         if metaData is None:
             self.metadata = metadata.Metadata()
         else:
@@ -193,21 +196,30 @@ class ABCHeaderTranslator(ABCTranslator):
     def translate_ABCInstruction(self, token: 'abcFormat.ABCInstruction'):
         if token.key.lower() == 'midi':
             try:
-                voiceId, m21Instrument = get_instrument(token.instruction)
-                self.midi[voiceId] = m21Instrument
+                # voice can be a midi channel(int) or the voiceId (str)
+                voice, m21Instrument = get_instrument(token.instruction)
+                self.midi[voice] = m21Instrument
             except ABCTranslateException as e:
                 environLocal.printDebug([e])
+        elif token.key.lower() == 'score':
+            # als erstes beschreibe voices die auf einen staff kommen, gib ihnen einen neue id
+            # zb: (V1 V2) = "(V1 V2)"
+            RE_STAFF_UNION = re.compile(r"[(][^)]+[)]")
+            for staveUnion in RE_STAFF_UNION.findall(token.instruction):
+                staveVoices = staveUnion[1:-1].split()
+                for staveVoice in staveVoices:
+                    self.staveUnions[staveVoice] = staveUnion
 
 class ABCTokenTranslator(ABCTranslator):
 
     def __init__(self, parent: stream.Part):
         super().__init__()
         self.parent = parent
-        self.octave_transposition = None
-        self.lyrics: 'abcFormat.ABCLyrics' = []
+        self.octave_transposition: Optional[int] = None
+        self.lyrics: List['abcFormat.ABCLyrics'] = []
 
 
-    def translate(self, handler: 'abcFormat.ABCVoiceHandler',
+    def translate(self, handler: 'abcFormat.ABCHandlerVoice',
                         target: Union[stream.Measure, stream.Part]):
 
         super().translate(handler, target)
@@ -227,7 +239,6 @@ class ABCTokenTranslator(ABCTranslator):
         return ks
 
     def translate_ABCVoice(self, token: 'abcFormat.ABCVoice'):
-
         if token.voiceId == '*':
             environLocal.printDebug(['Void "*" found in body context'])
         else:
@@ -239,10 +250,6 @@ class ABCTokenTranslator(ABCTranslator):
                 self.octave_transposition = token.octave
 
             return token.clef
-
-    #def translate_ABCTempo(self, token: 'abcFormat.ABCTempo'):
-    #    return token.getMetronomeMarkObject()
-
 
     def translate_ABCGeneralNote(self, token: 'abcFormat.ABCGeneralNote'):
         # set new lyrics
@@ -269,7 +276,6 @@ class ABCTokenTranslator(ABCTranslator):
         overlayTranslator.octave_transposition = self.octave_transposition
         overlayTranslator.translate(token.handler, voiceStream)
         return voiceStream
-        #self.m21Target.insert(0, voiceStream)
 
 
 
@@ -419,11 +425,6 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice', tuneHeader: ABCHe
             if abcVoice.octave is not None:
                 translator.octave_transposition = abcVoice.octave
 
-    if voiceHandler.voiceId in tuneHeader.midi:
-        m21Part.coreInsert(0, instrument.instrumentFromMidiProgram(tuneHeader.midi[None]))
-    elif None in tuneHeader.midi:
-        m21Part.coreInsert(0, instrument.instrumentFromMidiProgram(tuneHeader.midi[None]))
-
         # set the default tune timeSignature in the part stream
     if tuneHeader.abcMeter:
         m21Part.timeSignature = tuneHeader.abcMeter.getTimeSignatureObject()
@@ -501,13 +502,58 @@ def abcToStreamScore(abcHandler: 'abcFormat.ABCHandler', m21Score: stream.Score=
     headerTranslator.translate(headerHandler, m21Score)
 
     # translate the voices to parts
-    for voiceHandler in voices:
+    voiceToPartMap = {}
+    #from music21 import layout
+    #sg = layout.StaffGroup()
+    #sg.barTogether = 'yes'
+    #sg.symbol='brace'
+
+    for voiceIndex, voiceHandler in enumerate(voices, start=1):
         m21Part = abcToStreamPart(voiceHandler=voiceHandler, tuneHeader=headerTranslator)
-        m21Score.coreAppend(m21Part)
+        #m21Score.coreAppend(m21Part)
+
+        if voiceHandler.voiceId in headerTranslator.staveUnions:
+            partUnionName = headerTranslator.staveUnions[voiceHandler.voiceId]
+            if partUnionName in voiceToPartMap:
+                m21Part = voiceUnionParts[partUnionName]
+                m21PartVoice = stream.Voice(id=f"{voiceHandler.voiceId}")
+                abcToStreamPart(voiceHandler=voiceHandler, tuneHeader=headerTranslator, m21Part=m21PartVoice)
+                m21Part.coreInsert(0, m21PartVoice)
+                continue
+            else:
+                voiceUnionParts[partUnionName] = m21Part
+        else:
+            voiceToPartMap[voiceHandler.voiceId] = m21Part
+
+    # Search for parts to join into other parts:
+
+
+
+
+        # Look for midi instrument assigned to voiceId
+        try:
+            midiProgramm = headerTranslator.midi.get(voiceHandler.voiceId, headerTranslator.midi[voiceIndex])
+            m21Part.coreInsert(0, instrument.instrumentFromMidiProgram(midiProgramm))
+        except KeyError:
+            # no midi instrument assigned
+            pass
+
+    #m21Score.coreInsert(0, sg)
+
+    # Add parts (voices) into defined voice groups.
+    for staffGroup, voices in headerTranslator.staffGroups:
+        # Staff group with braces have a common name, that of the first part.
+        if staffGroup.symbol == 'brace':
+            staffGroup.name=voiceToPartMap[voices[0]]
+            staffGroup.abbreviation=voiceToPartMap[voices[0]]
+        for voice in voices:
+            staffGroup.addSpannedElements(voiceToPartMap[voice])
+
+        m21Score.insert(0, staffGroup)
 
     m21Score.coreElementsChanged()
 
-    # insert the metronomeMark form header at the first measure of the first voice
+    # insert the metronomeMark from header in the first measure of the first voice
     if headerTranslator.tempo and m21Score.parts:
         m21Score.parts[0].measure(0).insert(0, headerTranslator.tempo.getMetronomeMarkObject())
     return m21Score
@@ -541,9 +587,6 @@ def abcToStreamOpus(abcHandler, inputM21=None, number=None):
                     scoreList.append(abcToStreamScore(abcDict[key]))
                 except IndexError:
                     environLocal.warn(f'Failure for piece number {key}')
-                except abcFormat.ABCHandlerException:
-                     breakpoint()
-
             for scoreDocument in scoreList:
                 opus.coreAppend(scoreDocument, setActiveSite=False)
             opus.coreElementsChanged()

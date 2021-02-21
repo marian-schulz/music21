@@ -8,8 +8,6 @@ The aim of this implementation was to make the ABC converter easier to adapt new
 To do this, it was necessary to make some basic changes and rewrite many code that was 
 difficult to read and understand.
 
-As a small extra bonus, the abc import is now also faster.
-
 **The biggest disadvantage:**
 
 Some interfaces has changed so exisitig code based on the ABCFormat will need an adaption.
@@ -18,21 +16,25 @@ so that the code of this ABC format variant can be exchanged without further adj
 
 ## Added functionality
 * Extendet support of the abc KeySignatures syntax.
-* Support for complex meters.  
-* Most of the abc decorations are now supported.
-* Basic support for non chord symbol text annotations
+* Support for complex meters. (M: 3+2/4)
+* More abc decorations. (expression, artikulations, marks)
+* Basic support for non chord symbol text annotations ("^Annotation text")
 * Lyrics support is added. (w: but not W:)
-* Most of the clefs are supported
-* Support for stave names
-* User defined symbols (U:) are supported
-* Support for instrumentation through the midi directive
-
+* Most of the clefs are supported with multiple aliases
+* Support for stave names and subnames.
+* User defined symbols (U: T=!trill!)
+* Instrumentation through midi directives (%% midi .. )
+* Overlay voices (&)
+* Encoding of supported accents & ligatures in text fields
+* Inline fields ([K:C])
+* Field continuation (+: and trailing '\') (String type fields only)
 
 ## Fixed bugs
 * Spanners will work with grace notes
 * Better accidental propagation for chords. 
 * When using transposing clefs the pitchClass and the accidental displayStatus remains as intendet.
 * Stop leaking status changes in one voice to other voices (more general problem)
+* Minor bug in tempo field (Q)
 
 ## Workarounds
 * All notes of a tune with free meter and without any bars are placed in one measure insteat of a Part
@@ -41,17 +43,14 @@ This avoids the music21 exporter setting a 4/4 meter and call makeMeasures.
 ## TODO
 * Support for voice grouping
 * Support symbol lines
-* Support for overlay voices
 * Support for the voice property 'stem' (stemDirection)
-* Complete abc directive support
+* More abc directive support
 * Support for some style directives
 * Support for macros (m:)
 * Better support for ABCVersion related dialects & outdated syntax
-* Support for the special utf-8 charakters for accidentials
-* Support for latex encodet language related symbols in lyrics and information field
-This is an usecase for importing abc code written for abc2ps
-* Support for html encodet language related symbols (supported accents & ligatures) in text strings
+* Special utf-8 charakters for accidentials
 * Support the abc parts synatx (P:)
+
 # tokenizer
 The tokenizer is bases on regular expressions. The regular expressions are
 defined with the token class.
@@ -201,40 +200,41 @@ annotations, marks, expressions, articulations and dynamics.
 For practical reasons **ABCDecoration** is an instance of ABCToken but it will never show up 
 in any Tokenlist or is super class of any other ABCToken type.
 
-| abc decoration (src)  | ABCToken object |
-|-----------------|-----------------------|
-|!crescendo(!     | ABCCrescStart(src)    |
-|!<(!             | ABCCrescStart(src)    |
-|!crescendo)!     | ABCParenStop(src)     |
-|!<)!             | ABCParenStop(src)     |
-|!diminuendo(!    | ABCDimStart(src)      |
-|!>(!             | ABCDimStart(src)      |
-|!diminuendo)!    | ABCParenStop(src)     |
-|!>)!             | ABCParenStop(src)     |
-|!staccato!       | ABCArticulation(src, articulations.Staccato)     |
-|!downbow!        | ABCArticulation(src, articulations.DownBow)      |
-|!uppermordent!   | ABCExpression(src, expressions.InvertedMordent)  |
-|!pralltriller!   | ABCExpression(src, expressions.InvertedMordent)  |
-|!lowermordent!   | ABCExpression(src, expressions.Mordent)          |
-|!mordent!        | ABCExpression(src, expressions.Mordent)          |
-|!upbow!          | ABCArticulation(src, articulations.UpBow)        |
-|!emphasis!       | ABCArticulation(src, articulations.Accent)       |
-|!accent!         | ABCArticulation(src, articulations.Accent)       |
-|!straccent!      | ABCArticulation(src, articulations.StrongAccent) |
-|!tenuto!         | ABCArticulation(src, articulations.Tenuto)       |
-|!fermata!        | ABCExpression(src, expressions.Fermata)          |
-|!trill!          | ABCExpression(src, expressions.Trill)            |
-|!coda!           | ABCMark(src, repeat.Coda)   |
-|!segno!          | ABCMark(src, repeat.Segno)  |
-|!snap!           | ABCArticulation(src, articulations.SnapPizzicato)|
-|!.!              | ABCArticulation(src, articulations.Staccato)     |
-|!>!              | ABCArticulation(src, articulations.Accent)       |
-|!D.S.!           | ABCAnnotations('_D.S.')     |
-|!D.C.!           | ABCAnnotations('_D.C.')     |
-|!dacapo!         | ABCAnnotations('^DA CAPO')  |
-|!fine'!          | ABCAnnotations('^FINE')     |
+| abc decoration (src)  | ABCToken object                            |
+|-----------------------|--------------------------------------------|
+|!crescendo(!           | ABCCrescStart(src)                               |
+|!<(!                   | ABCCrescStart(src)                               |
+|!crescendo)!           | ABCParenStop(src)                                |
+|!<)!                   | ABCParenStop(src)                                |
+|!diminuendo(!          | ABCDimStart(src)                                 |
+|!>(!                   | ABCDimStart(src)                                 |
+|!diminuendo)!          | ABCParenStop(src)                                |
+|!>)!                   | ABCParenStop(src)                                |
+|!staccato!             | ABCArticulation(src, articulations.Staccato)     |
+|!downbow!              | ABCArticulation(src, articulations.DownBow)      |
+|!uppermordent!         | ABCExpression(src, expressions.InvertedMordent)  |
+|!pralltriller!         | ABCExpression(src, expressions.InvertedMordent)  |
+|!lowermordent!         | ABCExpression(src, expressions.Mordent)          |
+|!mordent!              | ABCExpression(src, expressions.Mordent)          |
+|!upbow!                | ABCArticulation(src, articulations.UpBow)        |
+|!emphasis!             | ABCArticulation(src, articulations.Accent)       |
+|!accent!               | ABCArticulation(src, articulations.Accent)       |
+|!straccent!            | ABCArticulation(src, articulations.StrongAccent) |
+|!tenuto!               | ABCArticulation(src, articulations.Tenuto)       |
+|!invertedfermata!      | ABCFermata(src)                                  |
+|!fermata!              | ABCExpression(src, expressions.Fermata)          |
+|!trill!                | ABCExpression(src, expressions.Trill)            |
+|!coda!                 | ABCMark(src, repeat.Coda)                        |
+|!segno!                | ABCMark(src, repeat.Segno)                       |
+|!snap!                 | ABCArticulation(src, articulations.SnapPizzicato)|
+|!.!                    | ABCArticulation(src, articulations.Staccato)     |
+|!>!                    | ABCArticulation(src, articulations.Accent)       |
+|!D.S.!                 | ABCAnnotations('_D.S.')                          |
+|!D.C.!                 | ABCAnnotations('_D.C.')                          |
+|!dacapo!               | ABCAnnotations('^DA CAPO')                       |
+|!fine'!                | ABCAnnotations('^FINE')                          |
 |!p!, !pp!, !ppp!, !pppp!, !f!, !ff!, !fff!, !ffff!, !mp!, !mf!, !sfz!| ABCDynamic(src) |
-|!1! - !5!        | ABCArticulation(src, articulations.Fingering)     |
+|!1! - !5!              | ABCArticulation(src, articulations.Fingering)     |
 
 There is some untested implementation stripping not only the '!' but also the '+' as enclosing symbol 
 defined by abc 2.0.  

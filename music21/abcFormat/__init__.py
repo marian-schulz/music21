@@ -108,6 +108,9 @@ RE_ABC_NOTE = re.compile(r'([\^_=]*)([A-Ga-gz])([0-9/\',]*)')
 RE_ABC_VERSION = re.compile(r'(?:((^[^%].*)?[\n])*%abc-)(\d+)\.(\d+)\.?(\d+)?')
 RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
 
+# store a mapping of ABC representation to pitch values
+_pitchTranslationCache = {}
+
 def makeMetaDataRegexpr(tag: str):
     """
     Creates a regular expression for ABCMetadata token class.
@@ -285,6 +288,17 @@ class ABCDimStart(ABCSpanner):
 class ABCParenStop(ABCToken):
     TOKEN_REGEX = r'\)'
 
+class ABCFermata(ABCExpression):
+    '''
+    The ABC Fermata is the 'upright' fermata in music21
+    '''
+    def __init__(self, src):
+        super().__init__(src, expressions.Fermata)
+
+    def m21Object(self):
+        fermata = self.m21Class()
+        fermata.type ='upright'
+        return fermata
 
 M21_DECORATIONS = {
     'crescendo(': ABCCrescStart,
@@ -306,9 +320,11 @@ M21_DECORATIONS = {
     'accent': articulations.Accent,
     'straccent': articulations.StrongAccent,
     'tenuto': articulations.Tenuto,
-    'fermata': expressions.Fermata,
+    'fermata': ABCFermata,
+    'invertedfermata': expressions.Fermata,
     'trill': expressions.Trill,
     'coda': repeat.Coda,
+    #'turn': expressions.Turn,
     'segno': repeat.Segno,
     'snap': articulations.SnapPizzicato,
     '.': articulations.Staccato,
@@ -320,6 +336,7 @@ M21_DECORATIONS = {
     # 'arpeggio'              vertical squiggle
     # '^':                    marcato (inverted V)
 }
+
 
 def ABCDecoration(src):
     """
@@ -1076,11 +1093,7 @@ class ABCLyrics(ABCMetadata):
         ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
         '''
         super().__init__(src)
-        # Split am \n, ist das letze zeichen der Zeile ein \ füge sie mit der nächsten zeile wieder zusammen
-        #src = src.split('\n')
-        #src = [s.rstrip(r'\\').lstrip('w:') for s in self.data.split('\n')]
-        #src = " ".join(src)
-        self.syllables = [s for s in RE_ABC_LYRICS.findall(self.data)]
+        self.syllables = [s.replace('~',' ') for s in RE_ABC_LYRICS.findall(self.data)]
 
 
 class ABCDirective(ABCToken):
@@ -1948,38 +1961,49 @@ class ABCNote(ABCGeneralNote):
         """
         if keySignature is None:
             keySignature = self.keySignature
-
         if carriedAccidental is None:
             carriedAccidental = self.carriedAccidental
 
         octave = self.octave + octave_transposition
+        cache_key = (self.pitchClass,
+                     octave,
+                     carriedAccidental,
+                     self.accidental,
+                     str(keySignature)
+                     )
 
-        if carriedAccidental:
-            active_accidental = carriedAccidental
-        elif keySignature:
-            active_accidental = next((p.accidental.modifier for p in keySignature.alteredPitches
-                                      if p.step == self.pitchClass), None)
-        else:
-            active_accidental = None
+        try:
+            return _pitchTranslationCache[cache_key]
 
-        if active_accidental:
-            if not self.accidental:
-                # the abc pitch has no accidental but there is an active accidental
-                accidental, display = active_accidental, False
-            elif self.accidental == active_accidental:
-                # the abc pitch has the same accidental as in active accidentals
-                accidental, display = self.accidental, False
+        except KeyError:
+            if carriedAccidental:
+                active_accidental = carriedAccidental
+            elif keySignature:
+                active_accidental = next((p.accidental.modifier for p in keySignature.alteredPitches
+                                          if p.step == self.pitchClass), None)
             else:
-                # the abc pitch has an accidental but it is not the same as in the active accidentals
-                accidental, display = self.accidental, True
-        elif self.accidental:
-            # the abc pitch has an accidental but not a an active accidental
-            accidental, display = self.accidental, True
-        else:
-            # the abc pitch has no accidental and no active accidental
-            accidental, display = '', None
+                active_accidental = None
 
-        return (f'{self.pitchClass}{accidental}{octave}', display)
+            if active_accidental:
+                if not self.accidental:
+                    # the abc pitch has no accidental but there is an active accidental
+                    accidental, display = active_accidental, False
+                elif self.accidental == active_accidental:
+                    # the abc pitch has the same accidental as in active accidentals
+                    accidental, display = self.accidental, False
+                else:
+                    # the abc pitch has an accidental but it is not the same as in the active accidentals
+                    accidental, display = self.accidental, True
+            elif self.accidental:
+                # the abc pitch has an accidental but not a an active accidental
+                accidental, display = self.accidental, True
+            else:
+                # the abc pitch has no accidental and no active accidental
+                accidental, display = '', None
+
+            result = (f'{self.pitchClass}{accidental}{octave}', display)
+            _pitchTranslationCache[cache_key] = result
+            return result
 
     def m21Object(self, octave_transposition: int = 0) -> Union['music21.note.Note', 'music21.note.Rest']:
         """
@@ -2890,6 +2914,7 @@ class ABCHandlerBar(ABCHandler):
 
         return ah
 
+_TOKEN_PROCESS_CACHE = {}
 
 class ABCTokenProcessor():
     '''
@@ -3089,18 +3114,6 @@ class ABCTokenProcessor():
 
         return token
 
-    def process_ABCUserDefinition(self, token: ABCUserDefinition):
-        try:
-            definition = token.tokenize()
-            if definition is None and token.symbol in self.userDefinedSymbols:
-                # return value of None indicates the symbol definition should deleted
-                del self.userDefinedSymbols[token.symbol]
-            else:
-                self.userDefinedSymbols[token.symbol] = list(definition)
-        except ABCTokenException as e:
-            environLocal.printDebug(['Creating token form UserDefined failed.', e])
-        return token
-
     def process_ABCNote(self, token: ABCNote):
         self.process_ABCGeneralNote(token)
         if token.accidental:
@@ -3151,6 +3164,18 @@ class ABCTokenProcessor():
         # token
         token.updateNoteCount()
         self.lastTupletToken = token
+        return token
+
+    def process_ABCUserDefinition(self, token: ABCUserDefinition):
+        try:
+            definition = token.tokenize()
+            if definition is None and token.symbol in self.userDefinedSymbols:
+                # return value of None indicates the symbol definition should deleted
+                del self.userDefinedSymbols[token.symbol]
+            else:
+                self.userDefinedSymbols[token.symbol] = list(definition)
+        except ABCTokenException as e:
+            environLocal.printDebug(['Creating token form UserDefined failed.', e])
         return token
 
     def process_ABCVoiceOverlay(self, token: ABCVoiceOverlay):
@@ -3213,17 +3238,23 @@ class ABCTokenProcessor():
 
                 # Caching the method lookup has no performance benefits.
                 # find a process method for the token by class name
-                token_process_method = getattr(self, f'process_{token.__class__.__name__}', None)
+                try:
+                    # some tiny speed up
+                    token_process_method = _TOKEN_PROCESS_CACHE[(self, token.__class__)]
+                except KeyError:
+                    token_process_method = getattr(self, f'process_{token.__class__.__name__}', None)
 
-                # find a process method for the token by super class name
-                if token_process_method is None:
-                    for token_base_class in token.__class__.__bases__:
-                        token_method_name = f'process_{token_base_class.__name__}'
-                        if hasattr(self, token_method_name):
-                            token_process_method = getattr(self, token_method_name)
-                            break
-                    else:
-                        environLocal.printDebug([f'No processing method for token: "{token}" found.'])
+                    # find a process method for the token by super class name
+                    if token_process_method is None:
+                        for token_base_class in token.__class__.__bases__:
+                            token_method_name = f'process_{token_base_class.__name__}'
+                            if hasattr(self, token_method_name):
+                                token_process_method = getattr(self, token_method_name)
+                                break
+                        else:
+                            environLocal.printDebug([f'No processing method for token: "{token}" found.'])
+
+                    _TOKEN_PROCESS_CACHE[(self, token.__class__.__name__)] = token_process_method
 
                 if token_process_method is not None:
                     token = token_process_method(token)
@@ -3743,7 +3774,7 @@ class Test(unittest.TestCase):
 
 def import_all_abc():
     import music21
-    for abc_file in pathlib.Path('../corpus/').glob('**/*.abc'):
+    for abc_file in pathlib.Path('../corpus/josquin').glob('**/*.abc'):
         with abc_file.open() as f:
             music21.converter.parse(f.read(), forceSource=True, format='abc')
 
@@ -3759,18 +3790,22 @@ _DOC_ORDER = [ABCFile, ABCHandler, ABCHandlerBar]
 
 if __name__ == '__main__':
     import music21
+    import cProfile
 
-    benchmark()
+    #benchmark()
+    #cProfile.run('import_all_abc()', sort="tottime")
+
     #music21.mainTest(Test)
     # us = environment.UserSettings()
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
     #with pathlib.Path('avemaria.abc').open() as f:
     #with pathlib.Path('Unendliche_Freude.abc').open() as f:
-    #with pathlib.Path('Magnificat.abc').open() as f:
-    #    avem = f.read()
+    with pathlib.Path('Magnificat.abc').open() as f:
+        avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()
-
-    #s = music21.converter.parse(avem, forceSource=True, format='abc')
-    #s.show()
+    #b= music21.corpus.parse('bwv66.6')
+    #b.show()
+    s = music21.converter.parse(avem, forceSource=True, format='abc')
+    s.show()
