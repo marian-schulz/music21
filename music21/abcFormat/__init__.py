@@ -212,6 +212,9 @@ class ABCSpanner(ABCToken):
     """
     Defines a base class for all spanner type tokens
     """
+    def __init__(self, src):
+        super().__init__(src)
+        self._spannerObj = None
 
     def m21Object(self):
         return self._spannerObj
