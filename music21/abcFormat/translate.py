@@ -146,8 +146,11 @@ class ABCHeaderTranslator(ABCTranslator):
         self.abcKey  = None
         self.abcMeter  = None
         self.tempo = None
-        self.staffGroups = []
-        self.staveUnions = {}
+        self.staveGroups = []
+
+        # Mapps voices to a stave (for multiple voices in one stave)
+        self.staveOverlay: Dict[str, str]= {}
+
         if metaData is None:
             self.metadata = metadata.Metadata()
         else:
@@ -201,14 +204,16 @@ class ABCHeaderTranslator(ABCTranslator):
                 self.midi[voice] = m21Instrument
             except ABCTranslateException as e:
                 environLocal.printDebug([e])
+
         elif token.key.lower() == 'score':
             # als erstes beschreibe voices die auf einen staff kommen, gib ihnen einen neue id
             # zb: (V1 V2) = "(V1 V2)"
-            RE_STAFF_UNION = re.compile(r"[(][^)]+[)]")
-            for staveUnion in RE_STAFF_UNION.findall(token.instruction):
+            RE_SCORE_STAVE_OVERLAY = re.compile(r"[(][^)]+[)]")
+            for staveUnion in RE_SCORE_STAVE_OVERLAY.findall(token.instruction):
                 staveVoices = staveUnion[1:-1].split()
                 for staveVoice in staveVoices:
-                    self.staveUnions[staveVoice] = staveUnion
+                    self.staveOverlay[staveVoice] = staveUnion
+
 
 class ABCTokenTranslator(ABCTranslator):
 
@@ -223,7 +228,7 @@ class ABCTokenTranslator(ABCTranslator):
                         target: Union[stream.Measure, stream.Part]):
 
         super().translate(handler, target)
-
+        #breakpoint()
 
     def translate_ABCMeter(self, token: 'abcFormat.ABCMeter'):
         return token.getTimeSignatureObject()
@@ -268,7 +273,8 @@ class ABCTokenTranslator(ABCTranslator):
     def translate_ABCSpanner(self, token: 'abcFormat.ABCSpanner'):
         m21object = token.m21Object()
         if m21object:
-            self.parent.coreInsert(0, m21object)
+            self.parent.coreInsert(0, m21object, setActiveSite=False)
+        #breakpoint()
 
     def translate_ABCVoiceOverlay(self, token: 'abcFormat.ABCVoiceOverlay'):
         voiceStream = stream.Voice(id=token.handler.overlayId)
@@ -279,9 +285,8 @@ class ABCTokenTranslator(ABCTranslator):
 
 
 
-def abcToStreamMeasure(voiceHandler: 'abcFormat.ABCHandlerVoice', m21Part: stream.Part, translator: ABCTokenTranslator):
+def abcToStreamMeasure(barHandlers: List['abcFormat.ABCHandlerBar'], m21Part: stream.Part, translator: ABCTokenTranslator):
 
-    barHandlers = voiceHandler.splitByMeasure()
     spannerBundle = spanner.SpannerBundle()
     m21Measures = []
 
@@ -380,6 +385,7 @@ def abcToStreamMeasure(voiceHandler: 'abcFormat.ABCHandlerVoice', m21Part: strea
     for m in m21Measures:
         m21Part.coreAppend(m)
 
+
     # copy spanners into the part container
     rm = []
     for sp in spannerBundle.getByCompleteStatus(True):
@@ -398,8 +404,7 @@ def abcToStreamMeasure(voiceHandler: 'abcFormat.ABCHandlerVoice', m21Part: strea
         pass
 
 
-
-def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice', tuneHeader: ABCHeaderTranslator,
+def abcToStreamPart(voiceHandler: Union[List, 'abcFormat.ABCHandlerVoice'], tuneHeader: ABCHeaderTranslator,
                     m21Part: Optional[stream.Part]=None) -> stream.Part:
     '''
     Handler conversion of a single Part of a multi-part score.
@@ -413,7 +418,15 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice', tuneHeader: ABCHe
 
     translator = ABCTokenTranslator(parent=m21Part)
 
-    # set voice specific clef properties
+    # Split a list of voice handlers in the main voice and subvoices
+    # The main voice creates the part, the subvoices get inserted as voices
+    # into the part
+    if isinstance(voiceHandler, list):
+        voiceHandler, *subVoices = voiceHandler
+    else:
+        subVoices = []
+
+        # set voice specific clef properties
     if voiceHandler.voiceId in tuneHeader.abcVoices:
         for abcVoice in tuneHeader.abcVoices[voiceHandler.voiceId]:
             if abcVoice.clef is not None:
@@ -424,6 +437,11 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice', tuneHeader: ABCHe
                 m21Part.partAbbreviation = abcVoice.subname
             if abcVoice.octave is not None:
                 translator.octave_transposition = abcVoice.octave
+
+            # if tranpose is a multiple of an octvae we did a
+            # octave tranposition
+            if not abcVoice.transpose % 12:
+                translator.octave_transposition += abcVoice.transpose // 12
 
         # set the default tune timeSignature in the part stream
     if tuneHeader.abcMeter:
@@ -462,7 +480,14 @@ def abcToStreamPart(voiceHandler: 'abcFormat.ABCHandlerVoice', tuneHeader: ABCHe
             m21Part.coreInsert(0, clef.bestClef(m21Part, recurse=True))
 
     else:
-        abcToStreamMeasure(voiceHandler=voiceHandler, m21Part=m21Part, translator=translator)
+        barHandlers = voiceHandler.splitByMeasure()
+        for voice in subVoices:
+            subVoiceBars = voice.splitByMeasure()
+            for bar, subVoiceBar in zip(barHandlers, subVoiceBars):
+                if subVoiceBar.hasNotes(noRests=True):
+                    bar.addOverlay(subVoiceBar.tokens, voice.voiceId)
+
+        abcToStreamMeasure(barHandlers=barHandlers, m21Part=m21Part, translator=translator)
 
     m21Part.coreElementsChanged()
     # Create beams
@@ -498,64 +523,57 @@ def abcToStreamScore(abcHandler: 'abcFormat.ABCHandler', m21Score: stream.Score=
     m21Score = stream.Score() if  m21Score is None else m21Score
     headerHandler, voices = abcHandler.process()
 
-    headerTranslator = ABCHeaderTranslator()
-    headerTranslator.translate(headerHandler, m21Score)
+    header = ABCHeaderTranslator()
+    header.translate(headerHandler, m21Score)
 
     # translate the voices to parts
-    voiceToPartMap = {}
+    staveToPartMap = {}
     #from music21 import layout
     #sg = layout.StaffGroup()
     #sg.barTogether = 'yes'
     #sg.symbol='brace'
 
-    for voiceIndex, voiceHandler in enumerate(voices, start=1):
-        m21Part = abcToStreamPart(voiceHandler=voiceHandler, tuneHeader=headerTranslator)
-        #m21Score.coreAppend(m21Part)
-
-        if voiceHandler.voiceId in headerTranslator.staveUnions:
-            partUnionName = headerTranslator.staveUnions[voiceHandler.voiceId]
-            if partUnionName in voiceToPartMap:
-                m21Part = voiceUnionParts[partUnionName]
-                m21PartVoice = stream.Voice(id=f"{voiceHandler.voiceId}")
-                abcToStreamPart(voiceHandler=voiceHandler, tuneHeader=headerTranslator, m21Part=m21PartVoice)
-                m21Part.coreInsert(0, m21PartVoice)
-                continue
-            else:
-                voiceUnionParts[partUnionName] = m21Part
+    # Assign voices to staves
+    from collections import defaultdict
+    staves = defaultdict(list)
+    for voiceHandler in voices:
+        stu = header.staveOverlay.get(voiceHandler.voiceId, None)
+        if stu:
+            # Group voices if they appear on the same stave
+            staves[stu].append(voiceHandler)
         else:
-            voiceToPartMap[voiceHandler.voiceId] = m21Part
+            staves[voiceHandler.voiceId] = voiceHandler
 
-    # Search for parts to join into other parts:
-
-
-
-
-        # Look for midi instrument assigned to voiceId
+    for staveIndex, (staveId, voiceHandler) in enumerate(staves.items(), start=1):
+        m21Part = abcToStreamPart(voiceHandler=voiceHandler, tuneHeader=header)
         try:
-            midiProgramm = headerTranslator.midi.get(voiceHandler.voiceId, headerTranslator.midi[voiceIndex])
+            midiProgramm = header.midi.get(staveId, header.midi[staveIndex])
             m21Part.coreInsert(0, instrument.instrumentFromMidiProgram(midiProgramm))
         except KeyError:
             # no midi instrument assigned
             pass
+        m21Part.coreElementsChanged(updateIsFlat=False)
+        m21Score.coreInsert(0, m21Part)
 
     #m21Score.coreInsert(0, sg)
 
     # Add parts (voices) into defined voice groups.
-    for staffGroup, voices in headerTranslator.staffGroups:
+
+    for staveGroup, voices in header.staveGroups:
         # Staff group with braces have a common name, that of the first part.
-        if staffGroup.symbol == 'brace':
-            staffGroup.name=voiceToPartMap[voices[0]]
-            staffGroup.abbreviation=voiceToPartMap[voices[0]]
+        if staveGroup.symbol == 'brace':
+            staveGroup.name=staveToPartMap[voices[0]]
+            staveGroup.abbreviation=staveToPartMap[voices[0]]
         for voice in voices:
-            staffGroup.addSpannedElements(voiceToPartMap[voice])
+            staveGroup.addSpannedElements(staveToPartMap[voice])
 
-        m21Score.insert(0, staffGroup)
+        m21Score.insert(0, staveGroup)
 
-    m21Score.coreElementsChanged()
+    m21Score.coreElementsChanged(updateIsFlat=False)
 
     # insert the metronomeMark from header in the first measure of the first voice
-    if headerTranslator.tempo and m21Score.parts:
-        m21Score.parts[0].measure(0).insert(0, headerTranslator.tempo.getMetronomeMarkObject())
+    if header.tempo and m21Score.parts:
+        m21Score.parts[0].measure(0).insert(0, header.tempo.getMetronomeMarkObject())
     return m21Score
 
 

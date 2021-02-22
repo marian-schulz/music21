@@ -2520,7 +2520,7 @@ class ABCHandler():
 
         return False
 
-    def hasNotes(self) -> bool:
+    def hasNotes(self, noRests: bool = False) -> bool:
         '''
         If tokens are processed, return True if ABCNote or
         ABCChord classes are defined
@@ -2540,8 +2540,10 @@ class ABCHandler():
         '''
         #if not self.tokens:
         #    raise ABCHandlerException('must process tokens before calling')
-
-        return any(isinstance(t, ABCGeneralNote) for t in self.tokens)
+        if noRests:
+            return any(isinstance(t, (ABCNote, ABCChord)) for t in self.tokens)
+        else:
+            return any(isinstance(t, ABCGeneralNote) for t in self.tokens)
 
     def splitByReferenceNumber(self) -> Dict[int, 'ABCHandler']:
         # noinspection PyShadowingNames
@@ -2861,7 +2863,7 @@ class ABCHandlerVoiceOverlay(ABCHandler):
     # tokens are ABC objects in a linear stream
     def __init__(self, abcVersion: Optional[ABCVersion]=None):
         super().__init__(abcVersion=abcVersion)
-        self.overlayId = 0
+        self.overlayId = None
 
     def process(self, tokenProcessor: 'ABCTokenProcessor') -> 'ABCHandlerVoice':
         # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
@@ -2886,6 +2888,12 @@ class ABCHandlerBar(ABCHandler):
         super().__init__(tokens)
         self.leftBarToken: Optional[ABCBar] = left
         self.rightBarToken: Optional[ABCBar] = rigth
+
+    def addOverlay(self, tokens: List[ABCToken], overlayId: str):
+        ol = ABCVoiceOverlay(src='&')
+        ol.handler.tokens = tokens
+        ol.handler.overlayId = overlayId
+        self.tokens.append(ol)
 
     def __add__(self, other):
         ah = self.__class__()  # will get the same class type
@@ -3794,14 +3802,37 @@ if __name__ == '__main__':
 
     #benchmark()
     #cProfile.run('import_all_abc()', sort="tottime")
-
+    avem ="""
+    X:1
+T:Zocharti Loch
+C:Louis Lewandowski (1821-1894)
+M:C
+Q:1/4=76
+%%score (T1 T2) (B1 B2)
+V:T1           clef=treble-8  name="Tenore I"   snm="T.I"
+V:T2           clef=treble-8  name="Tenore II"  snm="T.II"
+V:B1  middle=d clef=bass      name="Basso I"    snm="B.I"  transpose=-24
+V:B2  middle=d clef=bass      name="Basso II"   snm="B.II" transpose=-24
+K:Gm
+%            End of header, start of tune body:
+% 1
+[V:T1]  (B2c2 d2g2)  | f6e2      | (d2c2 d2)e2 | d4 c2z2 |
+[V:T2]  (G2A2 B2e2)  | d6c2      | (B2A2 B2)c2 | B4 A2z2 |
+[V:B1]       z8      | z2f2 g2a2 | b2z2 z2 e2  | f4 f2z2 |
+[V:B2]       x8      |     x8    |      x8     |    x8   |
+% 5
+[V:T1]  (B2c2 d2g2)  | f8        | d3c (d2fe)  | H d6    ||
+[V:T2]       z8      |     z8    | B3A (B2c2)  | H A6    ||
+[V:B1]  (d2f2 b2e'2) | d'8       | g3g  g4     | H^f6    ||
+[V:B2]       x8      | z2B2 c2d2 | e3e (d2c2)  | H d6    ||
+"""
     #music21.mainTest(Test)
     # us = environment.UserSettings()
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
     #with pathlib.Path('avemaria.abc').open() as f:
-    #with pathlib.Path('Unendliche_Freude.abc').open() as f:
-    with pathlib.Path('Magnificat.abc').open() as f:
+    with pathlib.Path('Unendliche_Freude.abc').open() as f:
+    #with pathlib.Path('Magnificat.abc').open() as f:
         avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()

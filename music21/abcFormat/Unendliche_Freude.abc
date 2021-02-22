@@ -25,8 +25,8 @@ L: 1/8
 Q: "Allegretto" 3/8=70
 %%score [TI | TII | B]
 %%MIDI program 1 12 % voice ooh
-%%MIDI program 2 53
-%%MIDI program 3 6
+%%MIDI program 2 12
+%%MIDI program 3 12
 V: TI  clef=treble-8 name="T I"  sname="TI"
 V: TII clef=treble-8 name="T II" sname="TII"
 V: B   clef=bass name="B" octave=-2 sname="B"
