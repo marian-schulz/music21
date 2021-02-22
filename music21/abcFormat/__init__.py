@@ -3834,11 +3834,17 @@ K:Gm
     # sys.arg test options will be used in mainTest()
     #with pathlib.Path('avemaria.abc').open() as f:
     #with pathlib.Path('Unendliche_Freude.abc').open() as f:
-    with pathlib.Path('Magnificat.abc').open() as f:
-        avem = f.read()
+    for file in pathlib.Path('.').glob('*.abc'):
+        with file.open() as f:
+            print(file)
+            abc = f.read()
+            s = music21.converter.parse(abc, forceSource=True, format='abc')
+            #s.show()
+    #with pathlib.Path('choral.abc').open() as f:
+    #    avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()
     #b= music21.corpus.parse('bwv66.6')
     #b.show()
-    s = music21.converter.parse(avem, forceSource=True, format='abc')
-    s.show()
+
+

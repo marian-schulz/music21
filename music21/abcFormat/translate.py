@@ -6,6 +6,7 @@
 # Authors:      Christopher Ariza
 #               Michael Scott Cuthbert
 #               Dylan Nagler
+#               Marian Schulz
 #
 # Copyright:    Copyright © 2010-2013 Michael Scott Cuthbert and the music21
 #               Project

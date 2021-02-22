@@ -28,6 +28,7 @@ so that the code of this ABC format variant can be exchanged without further adj
 * Encoding of supported accents & ligatures in text fields
 * Inline fields ([K:C])
 * Field continuation (+: and trailing '\') (String type fields only)
+* Support for voice grouping (%%score directive)
 
 ## Fixed bugs
 * Spanners will work with grace notes
@@ -41,7 +42,6 @@ so that the code of this ABC format variant can be exchanged without further adj
 This avoids the music21 exporter setting a 4/4 meter and call makeMeasures.
 
 ## TODO
-* Support for voice grouping
 * Support symbol lines
 * Support for the voice property 'stem' (stemDirection)
 * More abc directive support
@@ -50,6 +50,7 @@ This avoids the music21 exporter setting a 4/4 meter and call makeMeasures.
 * Better support for ABCVersion related dialects & outdated syntax
 * Special utf-8 charakters for accidentials
 * Support the abc parts synatx (P:)
+* Support for include files
 
 # tokenizer
 The tokenizer is bases on regular expressions. The regular expressions are
