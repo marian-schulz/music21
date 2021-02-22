@@ -273,8 +273,7 @@ class ABCTokenTranslator(ABCTranslator):
     def translate_ABCSpanner(self, token: 'abcFormat.ABCSpanner'):
         m21object = token.m21Object()
         if m21object:
-            self.parent.coreInsert(0, m21object, setActiveSite=False)
-        #breakpoint()
+            self.parent.coreAppend(m21object)
 
     def translate_ABCVoiceOverlay(self, token: 'abcFormat.ABCVoiceOverlay'):
         voiceStream = stream.Voice(id=token.handler.overlayId)

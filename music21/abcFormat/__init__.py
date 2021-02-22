@@ -1551,7 +1551,6 @@ class ABCSlurStart(ABCSpanner):
 
     def __init__(self, src):
         super().__init__(src)
-        self.slurObj = None
         from music21 import spanner
         self._spannerObj = spanner.Slur()
 
@@ -3830,8 +3829,8 @@ K:Gm
     # us = environment.UserSettings()
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
-    #with pathlib.Path('avemaria.abc').open() as f:
-    with pathlib.Path('Unendliche_Freude.abc').open() as f:
+    with pathlib.Path('avemaria.abc').open() as f:
+    #with pathlib.Path('Unendliche_Freude.abc').open() as f:
     #with pathlib.Path('Magnificat.abc').open() as f:
         avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
