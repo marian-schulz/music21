@@ -38,6 +38,7 @@ from music21 import metadata
 from music21 import duration
 from music21 import abcFormat
 from music21 import note
+from music21 import layout
 
 environLocal = environment.Environment('abcFormat.translate')
 
@@ -146,10 +147,10 @@ class ABCHeaderTranslator(ABCTranslator):
         self.abcKey  = None
         self.abcMeter  = None
         self.tempo = None
-        self.staveGroups = []
+        self.voiceBlocks = []
 
         # Mapps voices to a stave (for multiple voices in one stave)
-        self.staveOverlay: Dict[str, str]= {}
+        self.voiceGroups: Dict[str, str]= {}
 
         if metaData is None:
             self.metadata = metadata.Metadata()
@@ -206,13 +207,37 @@ class ABCHeaderTranslator(ABCTranslator):
                 environLocal.printDebug([e])
 
         elif token.key.lower() == 'score':
-            # als erstes beschreibe voices die auf einen staff kommen, gib ihnen einen neue id
-            # zb: (V1 V2) = "(V1 V2)"
-            RE_SCORE_STAVE_OVERLAY = re.compile(r"[(][^)]+[)]")
-            for staveUnion in RE_SCORE_STAVE_OVERLAY.findall(token.instruction):
-                staveVoices = staveUnion[1:-1].split()
-                for staveVoice in staveVoices:
-                    self.staveOverlay[staveVoice] = staveUnion
+            RE_SCORE_VOICE_GROUPS = re.compile(r"[(][^)]+[)]|[^\s{}\[\]|]+")
+            RE_SCORE_BLOCKS_BRACKET = re.compile(r"\[[^]]+\]")
+            RE_SCORE_BLOCKS_BRACE = re.compile(r"{[^}]+}")
+            f = list(RE_SCORE_VOICE_GROUPS.findall(token.instruction))
+            # parse voice groups
+            for voiceGroup in f:
+                if voiceGroup.startswith('('):
+                    groupVoices = voiceGroup[1:-1].split()
+                    for voiceId in groupVoices:
+                        self.voiceGroups[voiceId] = voiceGroup
+                else:
+                    self.voiceGroups[voiceGroup] = voiceGroup
+
+            # parse curly voice blocks
+            f = list(RE_SCORE_BLOCKS_BRACKET.findall(token.instruction))
+            for voiceBlock in f:
+                sg = layout.StaffGroup()
+                # @TODO: the '|' may belong to an inner BRACE Block
+                if '|' in voiceBlock:
+                    sg.barTogether = 'yes'
+
+                sg.symbol = 'bracket'
+                self.voiceBlocks.append((sg, RE_SCORE_VOICE_GROUPS.findall(voiceBlock)))
+
+            f = list(RE_SCORE_BLOCKS_BRACE.findall(token.instruction))
+            for voiceBlock in f:
+                sg = layout.StaffGroup()
+                if '|' in voiceBlock:
+                    sg.barTogether = 'yes'
+                sg.symbol = 'bracket'
+                self.voiceBlocks.append((sg, RE_SCORE_VOICE_GROUPS.findall(voiceBlock)))
 
 
 class ABCTokenTranslator(ABCTranslator):
@@ -272,8 +297,8 @@ class ABCTokenTranslator(ABCTranslator):
 
     def translate_ABCSpanner(self, token: 'abcFormat.ABCSpanner'):
         m21object = token.m21Object()
-        if m21object:
-            self.parent.coreAppend(m21object)
+        if m21object is not None:
+            self.parent.coreInsert(0, m21object)
 
     def translate_ABCVoiceOverlay(self, token: 'abcFormat.ABCVoiceOverlay'):
         voiceStream = stream.Voice(id=token.handler.overlayId)
@@ -290,8 +315,8 @@ def abcToStreamMeasure(barHandlers: List['abcFormat.ABCHandlerBar'], m21Part: st
     m21Measures = []
 
     for barNumber, abcBar in enumerate(barHandlers, start=0):
-        m21Measure = stream.Measure()
 
+        m21Measure = stream.Measure()
         translator.translate(abcBar, target=m21Measure)
 
         if abcBar.leftBarToken is not None:
@@ -525,48 +550,35 @@ def abcToStreamScore(abcHandler: 'abcFormat.ABCHandler', m21Score: stream.Score=
     header = ABCHeaderTranslator()
     header.translate(headerHandler, m21Score)
 
-    # translate the voices to parts
-    staveToPartMap = {}
-    #from music21 import layout
-    #sg = layout.StaffGroup()
-    #sg.barTogether = 'yes'
-    #sg.symbol='brace'
-
     # Assign voices to staves
     from collections import defaultdict
-    staves = defaultdict(list)
+    voiceGroups = defaultdict(list)
     for voiceHandler in voices:
-        stu = header.staveOverlay.get(voiceHandler.voiceId, None)
-        if stu:
-            # Group voices if they appear on the same stave
-            staves[stu].append(voiceHandler)
-        else:
-            staves[voiceHandler.voiceId] = voiceHandler
+        voiceGroup = header.voiceGroups.get(voiceHandler.voiceId, None)
+        if voiceGroup:
+            voiceGroups[voiceGroup].append(voiceHandler)
 
-    for staveIndex, (staveId, voiceHandler) in enumerate(staves.items(), start=1):
+    for staveIndex, (voiceGroup, voiceHandler) in enumerate(voiceGroups.items(), start=1):
         m21Part = abcToStreamPart(voiceHandler=voiceHandler, tuneHeader=header)
+
+        for staffGroup, voiceBlock in header.voiceBlocks:
+            # Staff group with braces have a common name, that of the first part.
+            if voiceGroup in voiceBlock:
+                staffGroup.addSpannedElements(m21Part)
+
         try:
-            midiProgramm = header.midi.get(staveId, header.midi[staveIndex])
+            midiProgramm = header.midi.get(voiceGroup, header.midi[staveIndex])
             m21Part.coreInsert(0, instrument.instrumentFromMidiProgram(midiProgramm))
         except KeyError:
             # no midi instrument assigned
             pass
+
+
         m21Part.coreElementsChanged(updateIsFlat=False)
         m21Score.coreInsert(0, m21Part)
 
-    #m21Score.coreInsert(0, sg)
-
-    # Add parts (voices) into defined voice groups.
-
-    for staveGroup, voices in header.staveGroups:
-        # Staff group with braces have a common name, that of the first part.
-        if staveGroup.symbol == 'brace':
-            staveGroup.name=staveToPartMap[voices[0]]
-            staveGroup.abbreviation=staveToPartMap[voices[0]]
-        for voice in voices:
-            staveGroup.addSpannedElements(staveToPartMap[voice])
-
-        m21Score.insert(0, staveGroup)
+    for staffGroup, _ in header.voiceBlocks:
+        m21Score.coreInsert(0, staffGroup)
 
     m21Score.coreElementsChanged(updateIsFlat=False)
 
