@@ -49,7 +49,7 @@ __all__ = [
     'ABCSlurStart', 'ABCParenStop', 'ABCCrescStart', 'ABCDimStart',
     'ABCGraceStart', 'ABCGraceStop', 'ABCBrokenRhythm',
     'ABCNote', 'ABCChord', 'ABCGeneralNote', 'ABCRest',
-    'ABCHandler', 'ABCHandlerBar', 'ABCHandlerVoice', 'ABCTokenProcessor',
+    'ABCHandler', 'ABCHandlerBar', 'ABCHandlerVoice', 'ABCVoiceProcessor',
     'ABCFile',
 ]
 
@@ -2839,6 +2839,7 @@ class ABCHandler():
         # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
         # Do not process tokens)
         abcTune = self.splitByVoice()
+
         for voice in abcTune.voices:
             voice.process()
 
@@ -2850,13 +2851,27 @@ class ABCHandlerVoice(ABCHandler):
     def __init__(self, tokens: List[ABCToken], voiceId: str = '1', abcVersion: Optional[ABCVersion] = None):
         super().__init__(tokens=tokens, abcVersion=abcVersion)
         self.voiceId = voiceId
+        self.transposition = 0
+        self.octave = None
+        self.clef = None
+        self.subname = ''
+        self.name = ''
+
+        self._measures = None
 
     def process(self) -> 'ABCHandlerVoice':
         # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
         # Do not process tokens
-        tokenProcessor = ABCTokenProcessor()
+        tokenProcessor = ABCVoiceProcessor()
         self.tokens = list(tokenProcessor.process(self))
         return self
+
+    @property
+    def measures(self):
+        if self._measures is None:
+            self._measures = self.splitByMeasure()
+
+        return self._measures
 
 class ABCHandlerVoiceOverlay(ABCHandler):
     # tokens are ABC objects in a linear stream
@@ -2864,7 +2879,7 @@ class ABCHandlerVoiceOverlay(ABCHandler):
         super().__init__(abcVersion=abcVersion)
         self.overlayId = None
 
-    def process(self, tokenProcessor: 'ABCTokenProcessor') -> 'ABCHandlerVoice':
+    def process(self, tokenProcessor: 'ABCVoiceProcessor') -> 'ABCHandlerVoice':
         # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
         # Do not process tokens
         self.tokens = list(tokenProcessor.process(self))
@@ -2924,6 +2939,113 @@ class ABCHandlerBar(ABCHandler):
 _TOKEN_PROCESS_CACHE = {}
 
 class ABCTokenProcessor():
+    def __init__(self, abcVersion: Optional[ABCVersion]=None):
+        self.abcVersion = abcVersion
+
+    def process(self, handler: ABCHandlerVoice) -> Iterator[ABCToken]:
+        '''
+        Process all token objects any supply contextual informations.
+
+        Each token class calls a method named "process_{token.__class.__name__}"
+        for processing. If no method with this name has found it will search for a
+        method of one of his base classes.
+        '''
+        # if not isinstance(handler, ABCHandlerVoice):
+        #    raise ABCHandlerException(f'Cannot process {handler}, a <ABCHandlerVoice is required !>')
+
+        self.handler = handler
+        if self.abcVersion is None:
+            self.abcVersion = handler.abcVersion
+
+        self.accidentalPropagation = self._accidental_propagation()
+        tokenIter = iter(handler.tokens)
+
+        while True:
+            # get a token from the token iteratur until the StopIteration exception has raised
+            try:
+                token = next(tokenIter)
+                if isinstance(token, ABCSymbol):
+                    # this is a special case, we replace the symbol token
+                    # with one or more user defined tokens
+                    try:
+                        # Lookup the symbol in the userDefinedSymbols dict
+                        # Has a default symbol dict as fallback.
+                        symbol_tokens = token.lookup(self.userDefinedSymbols)
+                        # chain the symbols in front of tokenIter and continue iterating
+                        tokenIter = itertools.chain(symbol_tokens, tokenIter)
+                        continue
+                    except ABCTokenException as e:
+                        # Not defined symbol
+                        environLocal.printDebug([e])
+                        continue
+
+                # Caching the method lookup has no performance benefits.
+                # find a process method for the token by class name
+                try:
+                    # some tiny speed up
+                    token_process_method = _TOKEN_PROCESS_CACHE[(self, token.__class__)]
+                except KeyError:
+                    token_process_method = getattr(self, f'process_{token.__class__.__name__}', None)
+
+                    # find a process method for the token by super class name
+                    if token_process_method is None:
+                        for token_base_class in token.__class__.__bases__:
+                            token_method_name = f'process_{token_base_class.__name__}'
+                            if hasattr(self, token_method_name):
+                                token_process_method = getattr(self, token_method_name)
+                                break
+                        else:
+                            environLocal.printDebug([f'No processing method for token: "{token}" found.'])
+
+                    _TOKEN_PROCESS_CACHE[(self, token.__class__.__name__)] = token_process_method
+
+                if token_process_method is not None:
+                    token_process_method(token)
+
+                if token is not None:
+                    yield token
+
+            except StopIteration:
+                # replace tokens with the collected tokens
+                break
+
+from collections import defaultdict
+
+class ABCHeaderProcessor(ABCTokenProcessor):
+    def __init__(self, abcVersion: Optional[ABCVersion]=None):
+        super().__init__(abcVersion)
+        self._tune: Optional
+        self.abcVoices = defaultdict(list)
+        self.titles = []
+        self.composers = []
+        self.referenceNumber = None
+        self.origin = None
+
+    def process_ABCVoice(self, token: 'abcFormat.ABCVoice'):
+        if token.voiceId == '*':
+            # the '*' id address all voices
+            for abcVoiceTokens in self.abcVoices.values():
+                abcVoiceTokens.append(token)
+        elif token.voiceId in self.abcVoices:
+            self.abcVoices[token.voiceId].append(token)
+        else:
+            # for new introduced voices, get the '*' (all voices) tokens
+            self.abcVoices[token.voiceId] = self.abcVoices['*'] + [token]
+
+    def process_ABCTitle(self, token: ABCTitle):
+        self.titles.append(token.data)
+
+    def process_ABCOrigin(self, token: ABCOrigin):
+        self.origin = token.data
+
+    def process_ABCComposer(self, token: ABCComposer):
+        self.composers.append(token.data)
+
+    def process_ABCReferenceNumber(self, token: ABCReferenceNumber):
+        # Convert referenceNumber to a number string
+        self.referenceNumber = token.data
+
+class ABCVoiceProcessor(ABCTokenProcessor):
     '''
     An ABCHandler for tokens of a an abc voice.
 
@@ -2941,7 +3063,7 @@ class ABCTokenProcessor():
     '''
 
     def __init__(self, abcVersion: Optional[ABCVersion]=None):
-        self.abcVersion = abcVersion
+        super().__init__(abcVersion)
         self.abcDirectives: Dict[str, str] = {}
         self.userDefinedSymbols: Dict[str, List[ABCToken]] = {}
         self.activeSpanner = []
@@ -2963,16 +3085,16 @@ class ABCTokenProcessor():
 
         # Use an extra Overlay Proccesor for voice Overlays
         self.overlayCounter = 0
-        self.overlayProcessors: List[ABCTokenProcessor] = []
+        self.overlayProcessors: List[ABCVoiceProcessor] = []
 
     def _accidental_propagation(self) -> str:
         '''
         Determine how accidentals should 'carry through the measure.'
 
-        >>> ah = abcFormat.ABCTokenProcessor(abcVersion=(1, 3, 0))
+        >>> ah = abcFormat.ABCVoiceProcessor(abcVersion=(1, 3, 0))
         >>> ah.accidentalPropagation
         'not'
-        >>> ah = abcFormat.ABCTokenProcessor(abcVersion=(2, 0, 0))
+        >>> ah = abcFormat.ABCVoiceProcessor(abcVersion=(2, 0, 0))
         >>> ah.accidentalPropagation
         'pitch'
         '''
@@ -3009,7 +3131,7 @@ class ABCTokenProcessor():
         """
         self.process_ABCGeneralNote(token)
         token.carriedAccidentals = self.carriedAccidentals
-        cp = ABCTokenProcessor(abcVersion=self.abcVersion)
+        cp = ABCVoiceProcessor(abcVersion=self.abcVersion)
 
         cp.carriedAccidentals = self.carriedAccidentals
         cp.lastKeySignature = self.lastKeySignature
@@ -3190,7 +3312,7 @@ class ABCTokenProcessor():
         # Count the overly tokens in a bar
         self.overlayCounter += 1
         if self.overlayCounter > len(self.overlayProcessors):
-            overlayProcessor = ABCTokenProcessor(abcVersion=self.abcVersion)
+            overlayProcessor = ABCVoiceProcessor(abcVersion=self.abcVersion)
             overlayProcessor.abcDirectives = self.abcDirectives
             overlayProcessor.userDefinedSymbols = self.userDefinedSymbols
             self.overlayProcessors.append(overlayProcessor)
@@ -3206,74 +3328,6 @@ class ABCTokenProcessor():
         token.handler.process(overlayProcessor)
 
         return token
-
-    def process(self, handler: ABCHandlerVoice) -> Iterator[ABCToken]:
-        '''
-        Process all token objects any supply contextual informations.
-
-        Each token class calls a method named "process_{token.__class.__name__}"
-        for processing. If no method with this name has found it will search for a
-        method of one of his base classes.
-        '''
-        #if not isinstance(handler, ABCHandlerVoice):
-        #    raise ABCHandlerException(f'Cannot process {handler}, a <ABCHandlerVoice is required !>')
-
-        self.handler = handler
-        if self.abcVersion is None:
-            self.abcVersion = handler.abcVersion
-
-        self.accidentalPropagation = self._accidental_propagation()
-        tokenIter = iter(handler.tokens)
-
-        while True:
-            # get a token from the token iteratur until the StopIteration exception has raised
-            try:
-                token = next(tokenIter)
-                if isinstance(token, ABCSymbol):
-                    # this is a special case, we replace the symbol token
-                    # with one or more user defined tokens
-                    try:
-                        # Lookup the symbol in the userDefinedSymbols dict
-                        # Has a default symbol dict as fallback.
-                        symbol_tokens = token.lookup(self.userDefinedSymbols)
-                        # chain the symbols in front of tokenIter and continue iterating
-                        tokenIter = itertools.chain(symbol_tokens, tokenIter)
-                        continue
-                    except ABCTokenException as e:
-                        # Not defined symbol
-                        environLocal.printDebug([e])
-                        continue
-
-                # Caching the method lookup has no performance benefits.
-                # find a process method for the token by class name
-                try:
-                    # some tiny speed up
-                    token_process_method = _TOKEN_PROCESS_CACHE[(self, token.__class__)]
-                except KeyError:
-                    token_process_method = getattr(self, f'process_{token.__class__.__name__}', None)
-
-                    # find a process method for the token by super class name
-                    if token_process_method is None:
-                        for token_base_class in token.__class__.__bases__:
-                            token_method_name = f'process_{token_base_class.__name__}'
-                            if hasattr(self, token_method_name):
-                                token_process_method = getattr(self, token_method_name)
-                                break
-                        else:
-                            environLocal.printDebug([f'No processing method for token: "{token}" found.'])
-
-                    _TOKEN_PROCESS_CACHE[(self, token.__class__.__name__)] = token_process_method
-
-                if token_process_method is not None:
-                    token_process_method(token)
-
-                if token is not None:
-                    yield token
-
-            except StopIteration:
-                # replace tokens with the collected tokens
-                break
-
 
 
 # ------------------------------------------------------------------------------
@@ -3801,11 +3855,11 @@ K:Gm
    #         abc = f.read()
    #         s = music21.converter.parse(abc, forceSource=True, format='abc')
     #        #s.show()
-    #with pathlib.Path('Unendliche_Freude.abc').open() as f:
-    #    avem = f.read()
+    with pathlib.Path('Unendliche_Freude.abc').open() as f:
+        avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()
-    #b= music21.converter.parse(avem, forceSource=True, format='abc')
-    #b.show()
+    b= music21.converter.parse(avem, forceSource=True, format='abc')
+    b.show()
 
 
