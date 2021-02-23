@@ -60,7 +60,6 @@ import re
 import unittest
 from typing import Union, Optional, List, Tuple, Type, Dict, Callable, Iterator, NamedTuple
 import itertools
-import functools
 
 from music21 import common
 from music21 import environment
@@ -72,8 +71,10 @@ from music21 import dynamics
 from music21 import repeat
 from music21 import meter
 from music21 import clef
+from music21 import spanner
 from music21.abcFormat import translate
 from music21.abcFormat import testFiles
+from music21.abcFormat.accents import encodeAccentsAndLigatures
 
 # for implementation
 # see http://abcnotation.com/abc2mtex/abc.txt
@@ -108,6 +109,25 @@ RE_ABC_NOTE = re.compile(r'([\^_=]*)([A-Ga-gz])([0-9/\',]*)')
 RE_ABC_VERSION = re.compile(r'(?:((^[^%].*)?[\n])*%abc-)(\d+)\.(\d+)\.?(\d+)?')
 RE_ABC_LYRICS = re.compile(r'[*\-_|]|[^*\-|_ ]+[\-]?')
 
+# ABC keysignature I: K:<tonic> <mode> <accidentals>
+RE_ABC_KEY_MODE = re.compile(r'(?P<tonic>H[pP]|[A-G][#b]?)?\s*'+
+                             r'(?P<mode>[a-zA-Z]*)(?P<accidentals>\s*.*)')
+
+# ABC keysignature II: K:<tonic> exp <accidentals>
+RE_KEY_EXP = re.compile(r'(?P<tonic>(H[pP])' +
+        r'|([A-G]?[#b]?))\s+exp\s+(?P<accidentals>.*)')
+
+# ABC Clef sytntax
+# @TODO: Multiline - realy ?
+CLEF_RE = re.compile(r'(?P<clef_name>clef\s*=\s*\S+(?!\S))' +
+        r'|(?P<octave>octave=[+\-]?[0-9](?!\S))' +
+        r'|(?P<transpose>t(ranspose)?\s*=\s*[+\-]?[0-9]+(?!\S))' +
+        r'|(?P<unamed>[^=]+?(?!\S))', re.MULTILINE)
+
+# ABC VOICE syntax
+VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*(".*?"|\S+)(?!\S))' +
+                      r'|(?P<subname>(subname|snm|sname)\s*=\s*(".*?"|\S+)(?!\S))')
+
 # store a mapping of ABC representation to pitch values
 _pitchTranslationCache = {}
 
@@ -133,7 +153,6 @@ def makeMetaDataRegexpr(tag: str):
 
 # Type aliases
 ABCVersion = Tuple[int, int, int]
-
 
 
 # ------------------------------------------------------------------------------
@@ -190,58 +209,55 @@ class ABCMark(ABCToken):
     Base class of abc score marker token
     Marker can placed on every position in a stream.
     '''
-
-    def __init__(self, src: str, m21class: Optional[Type] = None):
+    def __init__(self, src: str, m21Class: Type):
         super().__init__(src)
-        self.m21Class = m21class
+        self._m21Object = m21Class()
 
     def m21Object(self):
-        return self.m21Class()
+        return self._m21Object
 
 
 class ABCDynamic(ABCMark):
-    def m21Object(self) -> dynamics.Dynamic:
-        """
-        >>> abcFormat.ABCDynamic('!ppp!').m21Object()
-        <music21.dynamics.Dynamic ppp>
-        """
-        return dynamics.Dynamic(self.src[1:-1])
+    def __init__(self, src):
+        super().__init__(src, dynamics.Dynamic)
+        self._m21Object.value = self.src[1:-1]
 
 
 class ABCSpanner(ABCToken):
     """
     Defines a base class for all spanner type tokens
     """
-    def __init__(self, src):
+    def __init__(self, src, m21Class: Type):
         super().__init__(src)
-        self._spannerObj = None
+        self._m21Object = m21Class()
 
     def m21Object(self):
-        return self._spannerObj
+        return self._m21Object
 
 
 class ABCArticulation(ABCToken):
     def __init__(self: str, src, m21Class: Type):
         super().__init__(src)
-        self.m21Class = m21Class
+        self._m21Object = m21Class()
 
     def m21Object(self):
-        return self.m21Class()
+        return self._m21Object
 
 
 class ABCExpression(ABCToken):
     def __init__(self: str, src, m21Class: Type):
         super().__init__(src)
-        self.m21Class = m21Class
+        self._m21Object = m21Class()
 
     def m21Object(self):
-        return self.m21Class()
+        return self._m21Object
 
 
 class ABCAnnotations(ABCMark):
     """
-    ABC text Annotations are set in quotation marks, the first charakter indicate where the
-    annotation has set relative to the next note
+    ABC text Annotations are set in quotation marks,
+    the first charakter indicate where the annotation has
+    set relative to the next note
     ^ : above the noe
     _ : below the note
     < : left of the note
@@ -251,16 +267,13 @@ class ABCAnnotations(ABCMark):
     TOKEN_REGEX = '"[\^_<>@][^"]*"'
 
     def __init__(self, src: str):
-        super().__init__(src.strip('"'), expressions.TextExpression)
-
-    def m21Object(self):
-        te = expressions.TextExpression(self.src[1:])
-        # musicscore is ignoring relative-x / relative-y (need an other tool to check the placement directives)
-        if self.src[0] == '^':
-            te.positionPlacement = 'above'
-        elif self.src[0] == '_':
-            te.positionPlacement = 'below'
-        return te
+        super().__init__(src, expressions.TextExpression)
+        src = src.strip('"')
+        self._m21Object.content = src[1:]
+        if src[0] == '^':
+            self._m21Object.positionPlacement = 'above'
+        elif src[0] == '_':
+            self._m21Object.positionPlacement = 'below'
 
 
 class ABCCrescStart(ABCSpanner):
@@ -271,9 +284,7 @@ class ABCCrescStart(ABCSpanner):
     '''
 
     def __init__(self, src):
-        super().__init__(src)
-        from music21 import dynamics
-        self._spannerObj = dynamics.Crescendo()
+        super().__init__(src, dynamics.Crescendo)
 
 
 class ABCDimStart(ABCSpanner):
@@ -282,14 +293,13 @@ class ABCDimStart(ABCSpanner):
     They function identically to ABCCrescStart tokens.
     '''
 
-    def __init__(self, src):  # previous typo?: used to be __init
-        super().__init__(src)
-        from music21 import dynamics
-        self._spannerObj = dynamics.Diminuendo()
+    def __init__(self, src):
+        super().__init__(src, dynamics.Diminuendo)
 
 
 class ABCParenStop(ABCToken):
     TOKEN_REGEX = r'\)'
+
 
 class ABCFermata(ABCExpression):
     '''
@@ -297,11 +307,8 @@ class ABCFermata(ABCExpression):
     '''
     def __init__(self, src):
         super().__init__(src, expressions.Fermata)
+        self._m21Object.type ='upright'
 
-    def m21Object(self):
-        fermata = self.m21Class()
-        fermata.type ='upright'
-        return fermata
 
 M21_DECORATIONS = {
     'crescendo(': ABCCrescStart,
@@ -340,7 +347,6 @@ M21_DECORATIONS = {
     # '^':                    marcato (inverted V)
 }
 
-
 def ABCDecoration(src):
     """
     ABCDecoration is a factory function for ABCArticulation & ABCExpression
@@ -351,9 +357,9 @@ def ABCDecoration(src):
     >>> abcFormat.ABCDecoration("!ppp!")
     <music21.abcFormat.ABCDynamic '!ppp!'>
     """
-    map_key = src.strip('!').strip('+')
+    deco_key = src.strip('!').strip('+')
     try:
-        decoration_class = M21_DECORATIONS[map_key]
+        decoration_class = M21_DECORATIONS[deco_key]
         if isinstance(decoration_class, ABCAnnotations):
             return decoration_class
         if issubclass(decoration_class, articulations.Articulation):
@@ -368,9 +374,9 @@ def ABCDecoration(src):
         raise ABCTokenException(f'Unknown type "{decoration_class}" for decoration "{src}"')
 
     except KeyError:
-        if map_key in "12345":
-            return ABCArticulation(map_key, articulations.Fingering)
-        if map_key in ['p', 'pp', 'ppp', 'pppp', 'f', 'ff', 'fff',
+        if deco_key in "12345":
+            return ABCArticulation(deco_key, articulations.Fingering)
+        if deco_key in ['p', 'pp', 'ppp', 'pppp', 'f', 'ff', 'fff',
                        'ffff', 'mp', 'mf', 'sfz']:
             return ABCDynamic(src)
         raise ABCTokenException(f'Unknown abc decoration "{src}"')
@@ -378,11 +384,13 @@ def ABCDecoration(src):
 
 class ABCMetadata(ABCToken):
 
-    TOKEN_REGEX = '^[BADFGHZmNrRSZ]:.*'
+    # Not evaluated ABC Fields.
+    TOKEN_REGEX = '^[BADFGHZmNPrRSZ]:.*'
 
     def __init__(self, src):
         super().__init__(src)
 
+        # Inline fields are enclosed by brackets [K: C]
         if src.startswith('['):
             self.inlined = True
             src = src[1:-1]
@@ -402,7 +410,7 @@ class ABCMetadata(ABCToken):
             # Text fields can extend over several lines.
             # Either by '+:' on the next line or by an '\' on the
             # end of the line. (Only if the next line has the same tag).
-            lines = data.split('\n')
+            lines = data.split(r'\n')
             # for the first line the tag is already speperated
             _data = [lines[0].rstrip(r'\\').lstrip()]
             for line in lines[1:]:
@@ -423,6 +431,7 @@ class ABCMetadata(ABCToken):
 
         self.data: str = data
 
+
 class ABCReferenceNumber(ABCMetadata):
     TOKEN_REGEX = makeMetaDataRegexpr('X')
     def __init__(self, src):
@@ -434,11 +443,14 @@ class ABCReferenceNumber(ABCMetadata):
 class ABCTitle(ABCMetadata):
     TOKEN_REGEX = makeMetaDataRegexpr('T')
 
+
 class ABCOrigin(ABCMetadata):
     TOKEN_REGEX = makeMetaDataRegexpr('O')
 
+
 class ABCComposer(ABCMetadata):
     TOKEN_REGEX = makeMetaDataRegexpr('C')
+
 
 class ABCUnitNoteLength(ABCMetadata):
     r"""
@@ -472,12 +484,6 @@ class ABCUnitNoteLength(ABCMetadata):
             raise ABCTokenException(f'Invalid form of the unit not length "{self.src}"')
 
 
-CLEF_RE =  r'(?P<clef_name>clef\s*=\s*\S+(?!\S))'
-CLEF_RE += r'|(?P<octave>octave=[+\-]?[0-9](?!\S))'
-CLEF_RE += r'|(?P<transpose>t(ranspose)?\s*=\s*[+\-]?[0-9]+(?!\S))'
-CLEF_RE += r'|(?P<unamed>[^=]+?(?!\S))'
-CLEF_RE = re.compile(CLEF_RE, re.MULTILINE)
-
 class ABCClef():
     """
     The clefs with the +/-8 at then end transpose the melody an octave
@@ -506,15 +512,16 @@ class ABCClef():
     """
 
     CLEF_NAMES = {
-        'G1': clef.FrenchViolinClef,
-        'treble': clef.TrebleClef, 'g2': clef.TrebleClef,
+        'g1': clef.FrenchViolinClef,
+        'treble': clef.TrebleClef, 'g2': clef.TrebleClef, 'g': clef.TrebleClef,
         'treble-8': clef.Treble8vbClef, 'treble+8': clef.Treble8vaClef,
         'bass3': clef.CBaritoneClef, 'baritone': clef.CBaritoneClef,
         'f3': clef.CBaritoneClef, 'bass': clef.BassClef,
-        'f4': clef.BassClef, 'bass-8': clef.Bass8vbClef,
+        'f': clef.BassClef, 'f4': clef.BassClef,
+        'bass-8': clef.Bass8vbClef,
         'bass+8': clef.Bass8vaClef, 'f5': clef.SubBassClef,
         'tenor': clef.TenorClef, 'c4': clef.TenorClef,
-        'alto': clef.AltoClef, 'c3': clef.AltoClef,
+        'alto': clef.AltoClef, 'c3': clef.AltoClef, 'c': clef.AltoClef,
         'alto1': clef.SopranoClef, 'soprano': clef.SopranoClef,
         'c1': clef.SopranoClef, 'alto2': clef.MezzoSopranoClef,
         'mezzosoprano': clef.MezzoSopranoClef, 'c2': clef.MezzoSopranoClef
@@ -532,9 +539,9 @@ class ABCClef():
             k = m.lastgroup
             v = m.group()
             if k in ['transpose', 'octave', 'clef_name']:
-                setattr(self, k, v.split('=')[1].strip().strip('"'))
+                setattr(self, k, v.split('=')[1].lower().strip().strip('"'))
             else:
-                unamed.append(v.strip())
+                unamed.append(v.lower().strip())
 
         # the clef name is allowed without clef=<name>
         if self.clef_name is None:
@@ -544,23 +551,23 @@ class ABCClef():
                 if tag == '-8va':
                     self.octave = -1
 
-
         if self.clef_name:
-            self.clef = ABCClef.CLEF_NAMES[self.clef_name]()
+            try:
+                self.clef = ABCClef.CLEF_NAMES[self.clef_name]()
+            except KeyError:
+                environLocal.printDebug([ f'No clef for "{self.clef_name}" found.'])
 
         if self.octave is None:
             self.octave = self.clef.octaveChange if self.clef else None
         else:
             self.octave = int(self.octave)
 
-        # currenty unused
         self.transpose = int(self.transpose)
 
     def getClefObject(self):
         return self.clef
 
 
-VOICE_RE = re.compile(r'(?P<id>^\S+)|(?P<name>(name|nm)\s*=\s*(".*?"|\S+)(?!\S))|(?P<subname>(subname|snm|sname)\s*=\s*(".*?"|\S+)(?!\S))')
 class ABCVoice(ABCMetadata,  ABCClef):
 
     TOKEN_REGEX = makeMetaDataRegexpr('V')
@@ -630,7 +637,6 @@ class ABCTempo(ABCMetadata):
         >>> am = abcFormat.ABCTempo('Q:90')
         >>> am.getMetronomeMarkObject()
         <music21.tempo.MetronomeMark maestoso Quarter=90.0>
-
         '''
         mmObj = None
         from music21 import tempo
@@ -697,11 +703,13 @@ class ABCUserDefinition(ABCMetadata):
     This is the Token for the ABC filed 'U:'
     The token creates ABCTokens for a userdefined symbol
 
-    >>> v = abcFormat.ABCUserDefinition('U:m=.u')
-    >>> v.symbol
+    >>> ud = abcFormat.ABCUserDefinition('U:m=.')
+    >>> ud.symbol
     'm'
-    >>> v.definition
-    '.u'
+    >>> ud.definition
+    '.'
+    >>> ud.tokenize
+    <ABCArticukation >
     """
     TOKEN_REGEX = makeMetaDataRegexpr('U')
 
@@ -782,14 +790,6 @@ class ABCKey(ABCMetadata, ABCClef):
             self.alteredPitches: List[str]
         """
 
-        RE_MATCH_MODE = re.compile(r'(?P<tonic>(H[pP])' +
-                                   r'|([A-G][#b]?)?)[ ]*(?P<mode>[a-zA-Z]*)([ ]*(?P<accidentals>.*))')
-
-        # It is possible to use the format  to explicitly
-        # format: K:<tonic> exp <accidentals>
-        RE_MATCH_EXP = re.compile(r'(?P<tonic>(H[pP])' +
-                                  r'|([A-G]?[#b]?))[ ]+exp[ ]+(?P<accidentals>.*)')
-
         # abc uses b for flat and # for sharp in key tonic spec only
         TonicNames = {'C', 'G', 'D', 'A', 'E', 'B', 'F#', 'G#', 'A#', 'F',
                       'Bb', 'Eb', 'D#', 'Ab', 'E#', 'Db', 'C#', 'Gb', 'Cb'}
@@ -802,10 +802,13 @@ class ABCKey(ABCMetadata, ABCClef):
                    'aeo': 'aeolian', 'loc': 'locrian', 'min': 'minor',
                    'm': 'minor'}
 
-        match = RE_MATCH_EXP.match(self.data)
+        #if self.data == '^c _c':
+        #    breakpoint()
+
+        match = RE_KEY_EXP.match(self.data)
 
         if not match:
-            match = RE_MATCH_MODE.match(self.data)
+            match = RE_ABC_KEY_MODE.match(self.data)
             if match:
                 # Major is the default mode if mode is missing
                 # Only the first 3 letters of the mode are evaluated
@@ -958,6 +961,7 @@ class ABCInstruction(ABCMetadata):
         except :
             self.instruction = ''
 
+
 class ABCMeter(ABCMetadata):
     '''
     If there is a time signature representation available,
@@ -973,8 +977,7 @@ class ABCMeter(ABCMetadata):
     >>> am.defaultQuarterLength
     0.25
     '''
-
-    TOKEN_REGEX = r'^\s*M:.*$|\[M:[^\]\n%]*\]'
+    TOKEN_REGEX = makeMetaDataRegexpr('M')
 
     def __init__(self, src):
         super().__init__(src)
@@ -1073,24 +1076,23 @@ class ABCMeter(ABCMetadata):
         return 0.25 if self.ratio < 0.75 else 0.5
 
 
-from music21.abcFormat.accents import encodeAccentsAndLigatures
 class ABCLyrics(ABCMetadata):
 
     TOKEN_REGEX = makeMetaDataRegexpr('w')
 
     def __init__(self, src: str):
         r'''
-        >>> abc = ('w: ||A- ve Ma- ri- -\\\nw: |a! Jung- - - frau *|')
+        >>> abc = ('w: ||A- ve Ma- ri- -\\nw: |a! Jung- - - frau *|')
         >>> w = abcFormat.tokenize(abc)
         >>> next(w).syllables
         ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
 
-        >>> abc = ('w: |\n+:|A- ve Ma- ri- -\\\nw: |a! Jung- - - frau *|')
+        >>> abc = ('w: | \\n+:|A- ve Ma- ri- -\\nw: |a! Jung- - - frau *|')
         >>> w = abcFormat.tokenize(abc)
         >>> next(w).syllables
         ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
 
-        >>> abc = ('w: ||A- ve Ma- ri- -|a! Jung- - - frau *|')
+        >>> abc = (r'w: ||A- ve Ma- ri- -|a! Jung- - - frau *|')
         >>> w = abcFormat.tokenize(abc)
         >>> next(w).syllables
         ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
@@ -1103,11 +1105,15 @@ class ABCDirective(ABCToken):
     """
     The ABC Directive is a factory for an ABCMetadata object
     with the tag for an instruction (I:)
+    >>> token = abcFormat.ABCDirective('%% midi program 1 53')
+    >>> token
+    <music21.abcFormat.ABCInstruction 'I: midi program 1 53'>
     """
     TOKEN_REGEX = '%%.*'
 
     def __new__(cls, src: str):
-        return ABCInstruction(f'I:{src}')
+        return ABCInstruction(f'I:{src[2:]}')
+
 
 class ABCVoiceOverlay(ABCToken):
     TOKEN_REGEX = '&'
@@ -1117,6 +1123,7 @@ class ABCVoiceOverlay(ABCToken):
 
     def append(self, token: ABCToken):
         self.handler.tokens.append(token)
+
 
 class ABCSymbol(ABCToken):
     """
@@ -1553,9 +1560,7 @@ class ABCSlurStart(ABCSpanner):
     TOKEN_REGEX = r'\((?=[^0-9])'
 
     def __init__(self, src):
-        super().__init__(src)
-        from music21 import spanner
-        self._spannerObj = spanner.Slur()
+        super().__init__(src, spanner.Slur)
 
 
 class ABCGraceStart(ABCToken):
@@ -1593,21 +1598,18 @@ class ABCChordSymbol(ABCMark):
     TOKEN_REGEX = r'"[^\^<>_@"][^"]*"'
 
     def __init__(self, src):
+        ABCToken.__init__(self, src)
+        from music21 import harmony
         src = src[1:-1].strip()
         src = re.sub('[()]', '', src)
-        super().__init__(src)
-
-    def m21Object(self):
-        from music21 import harmony
         cs_name = common.cleanedFlatNotation(self.src)
         try:
             if cs_name in ('NC', 'N.C.', 'No Chord', 'None'):
-                cs = harmony.NoChord(cs_name)
+                self._m21Object= harmony.NoChord()
             else:
-                cs = harmony.ChordSymbol(cs_name)
-            return cs
+                self._m21Object = harmony.ChordSymbol(cs_name)
         except ValueError:
-            return None
+            self._m21Object = None
 
 
 # --------------------------------------------------------------------
@@ -2244,7 +2246,7 @@ TOKEN_RE = re.compile(r'|'.join(f'(?P<{group}>{spec[0]})'
 
 
 def tokenize(src: str, abcVersion: Optional[ABCVersion] = None) -> Iterator[ABCToken]:
-    '''
+    r'''
     Walk the abc string, creating ABC objects along the way.
 
     This may be called separately from process(), in the case
@@ -2256,21 +2258,18 @@ def tokenize(src: str, abcVersion: Optional[ABCVersion] = None) -> Iterator[ABCT
     >>> list(abcFormat.tokenize('X: 1'))
     [<music21.abcFormat.ABCReferenceNumber 'X: 1'>]
 
-    >>> list(abcFormat.tokenize('(6f'))
-    [<music21.abcFormat.ABCTuplet '(6'>, <music21.abcFormat.ABCNote 'f'>]
-
-    >>> list(abcFormat.tokenize('(6:4f'))
-    [<music21.abcFormat.ABCTuplet '(6:4'>, <music21.abcFormat.ABCNote 'f'>]
-
-    >>> list(abcFormat.tokenize('(6:4:2f'))
-    [<music21.abcFormat.ABCTuplet '(6:4:2'>, <music21.abcFormat.ABCNote 'f'>]
-
-    >>> list(abcFormat.tokenize('(6::2f'))
-    [<music21.abcFormat.ABCTuplet '(6::2'>, <music21.abcFormat.ABCNote 'f'>]
+    >>> list(abcFormat.tokenize('M:6/8\nL:1/8\nK:G\nB3 A3 | G6 |'))
+    [<music21.abcFormat.ABCMeter 'M:6/8'>, <music21.abcFormat.ABCUnitNoteLength 'L:1/8'>,
+    <music21.abcFormat.ABCKey 'K:G'>, <music21.abcFormat.ABCNote 'B3'>, <music21.abcFormat.ABCNote 'A3'>,
+    <music21.abcFormat.ABCBar '|'>, <music21.abcFormat.ABCNote 'G6'>, <music21.abcFormat.ABCBar '|'>]
     '''
+
     for m in TOKEN_RE.finditer(src):
         rule = m.lastgroup
         value = m.group()
+
+        if rule == 'COMMENT':
+            continue
 
         if rule == 'ABCDirective':
             # remove the '%%' start of a directive
@@ -2427,7 +2426,7 @@ class ABCHandler():
         activeVoice = []
         lastOverlayToken : ABCVoiceOverlay = None
 
-        voices = {'1': activeVoice}
+        voices = {'1': activeVoice }
         tokenIter = iter(self.tokens)
         header = []
         for token in tokenIter:
@@ -2480,7 +2479,7 @@ class ABCHandler():
         voiceHandler = []
         # Create a new Handler for each voice with the header tokens first.
         for voiceId , voiceTokens in voices.items():
-            voice_header = [t for t in header if t.tag in "LKM"]
+            voice_header = [t for t in header if t.tag in "VLKM"]
             vh = ABCHandlerVoice(voiceId=voiceId,
                                  tokens=voice_header + voiceTokens,
                                  abcVersion=self.abcVersion)
@@ -2696,7 +2695,7 @@ class ABCHandler():
         >>> abcTune = ah.process('X:1\nL:1/2\n| CG |]')
         >>> mhl = abcTune.voices[0].splitByMeasure()
         >>> for mh in mhl: print (mh.tokens)
-        [<music21.abcFormat.ABCReferenceNumber 'X:1'>, <music21.abcFormat.ABCUnitNoteLength 'L:1/2'>,
+        [<music21.abcFormat.ABCUnitNoteLength 'L:1/2'>,
         <music21.abcFormat.ABCNote 'C'>, <music21.abcFormat.ABCNote 'G'>]
         >>> for mh in mhl: print (mh.leftBarToken, mh.rightBarToken)
         <music21.abcFormat.ABCBar '|'> <music21.abcFormat.ABCBar '|]'>
@@ -3109,6 +3108,7 @@ class ABCTokenProcessor():
 
     def process_ABCUnitNoteLength(self, token: ABCUnitNoteLength):
         self.lastDefaultQL = token.defaultQuarterLength
+        return token
 
     def process_ABCVoice(self, token: ABCVoice):
         self.lastLyricNote = None
@@ -3244,6 +3244,7 @@ class ABCTokenProcessor():
                     except ABCTokenException as e:
                         # Not defined symbol
                         environLocal.printDebug([e])
+                        raise e
                         continue
 
                 # Caching the method lookup has no performance benefits.
@@ -3484,8 +3485,12 @@ class Test(unittest.TestCase):
             testFiles.kitchGirl,
             testFiles.williamAndNancy,
         ]:
-            abcHandler = ABCHandler(tokens=tokenize(tf))
-            abcHandler.process()
+            try:
+                tokens = list(tokenize(tf))
+                abcHandler = ABCHandler(tokens=tokens)
+                abcHandler.process()
+            except:
+                breakpoint()
 
     def testNoteParse(self):
         from music21 import key
@@ -3799,6 +3804,8 @@ def benchmark():
 _DOC_ORDER = [ABCFile, ABCHandler, ABCHandlerBar]
 
 if __name__ == '__main__':
+    us = environment.UserSettings()
+    us['debug'] = True
     import music21
     import cProfile
 
@@ -3828,23 +3835,36 @@ K:Gm
 [V:B1]  (d2f2 b2e'2) | d'8       | g3g  g4     | H^f6    ||
 [V:B2]       x8      | z2B2 c2d2 | e3e (d2c2)  | H d6    ||
 """
-    #music21.mainTest(Test)
+
+    #abcStr = 'M:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||'
+    #ah = ABCHandler()
+    #abcTune = ah.process(abcStr)
+    #abcStr = ('M:6/8\nL:1/8\nV: * clef=treble\nK:G\nV:1 name="Whistle" ' +
+    #    'snm="wh"\nB3 A3 | G6 | B3 A3 | G6 ||\nV:2 name="violin" ' +
+    #    'snm="v"\nBdB AcA | GAG D3 | BdB AcA | GAG D6 ||\nV:3 name="Bass" ' +
+    #    'snm="b" clef=bass\nD3 D3 | D6 | D3 D3 | D6 ||')
+
+    #ah = ABCHandler()
+    #ah.tokenize(abcStr)
+    #abcTune = ah.splitByVoice()
+
+    music21.mainTest(Test)
     # us = environment.UserSettings()
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
     #with pathlib.Path('avemaria.abc').open() as f:
     #with pathlib.Path('Unendliche_Freude.abc').open() as f:
-    for file in pathlib.Path('.').glob('*.abc'):
-        with file.open() as f:
-            print(file)
-            abc = f.read()
-            s = music21.converter.parse(abc, forceSource=True, format='abc')
-            #s.show()
-    #with pathlib.Path('choral.abc').open() as f:
+    #for file in pathlib.Path('.').glob('*.abc'):
+    #    with file.open() as f:
+   #         print(file)
+   #         abc = f.read()
+   #         s = music21.converter.parse(abc, forceSource=True, format='abc')
+    #        #s.show()
+    #with pathlib.Path('Unendliche_Freude.abc').open() as f:
     #    avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
     #   avem = f.read()
-    #b= music21.corpus.parse('bwv66.6')
+    #b= music21.converter.parse(avem, forceSource=True, format='abc')
     #b.show()
 
 

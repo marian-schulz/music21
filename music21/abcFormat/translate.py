@@ -129,7 +129,7 @@ class ABCTranslator():
                         token_translate_method = getattr(self, token_translate_method)
                         break
                 else:
-                    environLocal.printDebug([f'No translation method for token: "{token}" found.'])
+                    #environLocal.printDebug([f'No translation method for token: "{token}" found.'])
                     continue
 
             if token_translate_method is not None:
@@ -465,8 +465,8 @@ def abcToStreamPart(voiceHandler: Union[List, 'abcFormat.ABCHandlerVoice'], tune
 
             # if tranpose is a multiple of an octvae we did a
             # octave tranposition
-            if not abcVoice.transpose % 12:
-                translator.octave_transposition += abcVoice.transpose // 12
+            if translator.octave_transposition is None and not abcVoice.transpose % 12:
+                translator.octave_transposition = abcVoice.transpose // 12
 
         # set the default tune timeSignature in the part stream
     if tuneHeader.abcMeter:
@@ -554,10 +554,13 @@ def abcToStreamScore(abcHandler: 'abcFormat.ABCHandler', m21Score: stream.Score=
     # Assign voices to staves
     from collections import defaultdict
     voiceGroups = defaultdict(list)
-    for voiceHandler in voices:
-        voiceGroup = header.voiceGroups.get(voiceHandler.voiceId, None)
-        if voiceGroup:
-            voiceGroups[voiceGroup].append(voiceHandler)
+    if header.voiceGroups:
+        for voiceHandler in voices:
+            voiceGroup = header.voiceGroups.get(voiceHandler.voiceId, None)
+            if voiceGroup:
+                voiceGroups[voiceGroup].append(voiceHandler)
+    else:
+        voiceGroups = { vh.voiceId: vh for vh in voices}
 
     for staveIndex, (voiceGroup, voiceHandler) in enumerate(voiceGroups.items(), start=1):
         m21Part = abcToStreamPart(voiceHandler=voiceHandler, tuneHeader=header)
