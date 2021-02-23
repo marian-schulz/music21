@@ -502,7 +502,7 @@ AB|cdec BcdB|A<<BA<F G<FE>>2|c{de}c BcdB|c2A2 A2:|
 w: la-la, la
 U:H=!.!
 % comment line
-%% midi
+%% midi % abc directive
 E2E (EFE)|E2-E !upbow!EFG|\
 M:9/8
 A2G !pp!F2E "^Annotation"D2|]
