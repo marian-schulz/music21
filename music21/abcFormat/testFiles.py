@@ -143,7 +143,7 @@ S:via PR
 M:4/4
 L:1/4
 K:D
-'A"[c2 a2 ]"G"[B2g2]|"A"e/2f/2e/2d/2 cc/2d/2|"A"e/2c/2e/2f/2 "G"g/2a/2b/2a/2|\
+"A"[c2 a2 ]"G"[B2g2]|"A"e/2f/2e/2d/2 cc/2d/2|"A"e/2c/2e/2f/2 "G"g/2a/2b/2a/2|\
 "E"^ge ee/2=g/2|
 "A"a/2b/2a/2f/2 "G"g/2a/2g/2f/2|"A"e/2f/2e/2d/2 c/2d/2e/2f/2|\
 "G"gd "E"e/2f/2e/2d/2|"A"cA A2::
@@ -488,22 +488,29 @@ B,2|!diminuendo(!KE^DkK.uvME-E!diminuendo)! !GARBAGE! {CDEFGAB} ((3.G.FG){BA}BA)
 
 # noinspection SpellCheckingInspection
 testPrimitive = '''
+X:1
+T: text
+V:1
 M:4/4
+C: F.J.Schubert
 ed|cecA B2ed|cAcA E2ed|cecA B2ed|c2A2 A2:|
 K:G
-
-AB|cdec BcdB|ABAF GFE2|cdec BcdB|c2A2 A2:|
-
+I: codepage
+L:1/8
+Q: 1/4=50
+AB|cdec BcdB|A<<BA<F G<FE>>2|c{de}c BcdB|c2A2 A2:|
+w: la-la, la
+U:H=!.!
 % comment line
-
-E2E EFE|E2E EFG|\
+%% midi
+E2E (EFE)|E2-E !upbow!EFG|\
 M:9/8
-A2G F2E D2|]
-
+A2G !pp!F2E "^Annotation"D2|]
 "C"[CEGc] "Gm7"[.=G,^c']
 
 (3.a.b.c  % stacato
 vAuBvA  % up down bow
+| !uppermordent!AB & CE |
 '''
 
 testPrimitivePolyphonic = '''M:6/8
@@ -515,6 +522,24 @@ V:2 name="violin" snm="v"
 BdB AcA | GAG D3 | BdB AcA | D6 ||
 V:3 name="Bass" snm="b" clef=bass
 D3 D3 | D6 | D3 D3 | D6 ||
+'''
+
+testClef ='''
+T:Clefs
+L:1/4
+K:C alto3
+B2 C2 [K: clef=alto] C2
+[K: treble]A,2[K: clef=mezzosoprano]A,2
+[K: treble]D,2[K: bass]D,2
+A,2
+K: clef=tenor
+A,2
+C2 [K: clef=soprano] C2
+D,2[K: bass-8]D,2
+C2 [K: clef=alto] C2
+A,2 [K: clef=tenor] A,2
+D,2[K: bass+8]D,2
+B2 [K: treble-8] B2
 '''
 
 # noinspection SpellCheckingInspection

@@ -385,10 +385,10 @@ def ABCDecoration(src):
 class ABCMetadata(ABCToken):
 
     # Not evaluated ABC Fields.
-    TOKEN_REGEX = '^[BADFGHZmNPrRSZ]:.*'
+    TOKEN_REGEX = '^[BADFGHZmNPrRSWZ]:.*'
 
     def __init__(self, src):
-        super().__init__(src)
+        super().__init__(src.strip())
 
         # Inline fields are enclosed by brackets [K: C]
         if src.startswith('['):
@@ -575,14 +575,14 @@ class ABCVoice(ABCMetadata,  ABCClef):
     def __init__(self, src):
         r"""
         >>> v = abcFormat.ABCVoice('V:1 nm="piano" subname=accompaniment')
-        >>> v.id
+        >>> v.voiceId
         '1'
         >>> v.name
         'piano'
         >>> v.subname
         'accompaniment'
 
-        We got also clef informations from a voice field
+        We got also clef informations from a voice field via ABCClef
         >>> v = abcFormat.ABCVoice("V:1 treble")
         >>> v.clef
         <music21.clef.TrebleClef>
@@ -708,8 +708,6 @@ class ABCUserDefinition(ABCMetadata):
     'm'
     >>> ud.definition
     '.'
-    >>> ud.tokenize
-    <ABCArticukation >
     """
     TOKEN_REGEX = makeMetaDataRegexpr('U')
 
@@ -720,10 +718,10 @@ class ABCUserDefinition(ABCMetadata):
         self.symbol = parts[0].strip()
         self.definition = parts[1].strip()
 
-    def tokenize(self, parent: Optional['ABCHandler']=None) -> List[ABCToken]:
+    def tokenize(self, parent: Optional['ABCHandler']=None) -> Optional[List[ABCToken]]:
         """
-        >>> abcFormat.ABCUserDefinition('U:m=.u').tokenize()
-        [<music21.abcFormat.ABCArticulation '.'>, <music21.abcFormat.ABCSymbol 'u'>]
+        >>> abcFormat.ABCUserDefinition('U:m=!trill!').tokenize()
+        [<music21.abcFormat.ABCExpression '!trill!'>]
         """
         if self.definition in ['!nil!', '!none!']:
             return None
@@ -2479,7 +2477,7 @@ class ABCHandler():
         voiceHandler = []
         # Create a new Handler for each voice with the header tokens first.
         for voiceId , voiceTokens in voices.items():
-            voice_header = [t for t in header if t.tag in "VLKM"]
+            voice_header = [t for t in header if t.tag in "VLKMUI"]
             vh = ABCHandlerVoice(voiceId=voiceId,
                                  tokens=voice_header + voiceTokens,
                                  abcVersion=self.abcVersion)
@@ -3244,7 +3242,6 @@ class ABCTokenProcessor():
                     except ABCTokenException as e:
                         # Not defined symbol
                         environLocal.printDebug([e])
-                        raise e
                         continue
 
                 # Caching the method lookup has no performance benefits.
@@ -3268,7 +3265,7 @@ class ABCTokenProcessor():
                     _TOKEN_PROCESS_CACHE[(self, token.__class__.__name__)] = token_process_method
 
                 if token_process_method is not None:
-                    token = token_process_method(token)
+                    token_process_method(token)
 
                 if token is not None:
                     yield token
@@ -3418,33 +3415,54 @@ class Test(unittest.TestCase):
 
     def testTokenization(self):
         from music21.abcFormat import testFiles
+        from collections import Counter
 
-        for (tf, countTokens, noteTokens, chordTokens) in [
-            (testFiles.fyrareprisarn, 242, 152, 0),
-            (testFiles.mysteryReel, 198, 153, 0),
-            (testFiles.aleIsDear, 291, 206, 32),
-            (testFiles.testPrimitive, 102, 75, 2),
-            (testFiles.williamAndNancy, 173, 93, 0),
-            (testFiles.morrisonsJig, 178, 137, 0),
-        ]:
+        testData = [
+            ('fyrareprisarn', {'ABCNote': 152, 'ABCBrokenRhythm': 42,
+                               'ABCBar': 35, 'ABCMetadata': 4, 'ABCInstruction': 1,
+                               'ABCReferenceNumber': 1, 'ABCTitle': 1, 'ABCOrigin': 1,
+                               'ABCMeter': 1, 'ABCUnitNoteLength': 1, 'ABCKey': 1,
+                               'ABCGraceStart': 1, 'ABCGraceStop': 1}),
+            ('mysteryReel', {'ABCNote': 153, 'ABCBar': 30, 'ABCSymbol': 6,
+                             'ABCTuplet': 3, 'ABCMetadata': 2, 'ABCReferenceNumber': 1,
+                             'ABCTitle': 1, 'ABCMeter': 1, 'ABCKey': 1}),
+            ('aleIsDear', {'ABCNote': 143, 'ABCRest': 63, 'ABCChord': 32, 'ABCBar': 31,
+                           'ABCBrokenRhythm': 13, 'ABCVoice': 2, 'ABCReferenceNumber': 1,
+                           'ABCTitle': 1, 'ABCMeter': 1, 'ABCUnitNoteLength': 1,
+                           'ABCMetadata': 1, 'ABCTempo': 1, 'ABCKey': 1}),
+            ('testPrimitive', {'ABCNote': 79, 'ABCBar': 16, 'ABCArticulation': 4, 'ABCSymbol': 3,
+                               'ABCChordSymbol': 2, 'ABCChord': 2, 'ABCMeter': 1, 'ABCExpression': 1,
+                               'ABCKey': 1, 'ABCTuplet': 1, 'ABCVoiceOverlay': 1, 'ABCDynamic': 1,
+                               'ABCTitle': 1, 'ABCLyrics': 1, 'ABCReferenceNumber':1, 'ABCVoice': 1,
+                               'ABCInstruction': 2, 'ABCUserDefinition':1, 'ABCUnitNoteLength':1,
+                               'ABCSlurStart': 1, 'ABCParenStop': 1, 'ABCTempo': 1, 'ABCTie': 1,
+                               'ABCGraceStart':1, 'ABCGraceStop':1, 'ABCBrokenRhythm': 4,
+                               'ABCComposer': 1}),
+            ('williamAndNancy', {'ABCNote': 93, 'ABCChordSymbol': 46, 'ABCBar': 25, 'ABCMetadata': 5,
+                                 'ABCReferenceNumber': 1, 'ABCTitle': 1, 'ABCMeter': 1, 'ABCKey': 1}),
+            ('morrisonsJig', {'ABCNote': 137, 'ABCBar': 33, 'ABCMetadata': 2, 'ABCReferenceNumber': 1,
+                              'ABCTitle': 1, 'ABCOrigin': 1, 'ABCMeter': 1, 'ABCUnitNoteLength': 1,
+                              'ABCKey': 1}),
+            ('guineapigTest', {'ABCNote': 51, 'ABCParenStop': 12, 'ABCSymbol': 8, 'ABCSlurStart': 7,
+                               'ABCBar': 5, 'ABCTuplet': 4, 'ABCArticulation': 3, 'ABCTie': 3,
+                               'ABCGraceStart': 3, 'ABCGraceStop': 3, 'ABCReferenceNumber': 1,
+                               'ABCTitle': 1, 'ABCMeter': 1, 'ABCUnitNoteLength': 1, 'ABCKey': 1,
+                               'ABCDimStart': 1})
+        ]
 
-            tokens = list(tokenize(tf))
+        for (testfile, sollCounter) in testData:
+            abc = getattr(testFiles, testfile)
+            tokens = list(tokenize(abc))
 
-            self.assertEqual(len(tokens), countTokens, tf)
-            countNotes = 0
-            countChords = 0
-            countRest = 0
-            for o in tokens:
-                if isinstance(o, ABCChord):
-                    countChords += 1
-                elif isinstance(o, ABCNote):
-                    countNotes += 1
-                elif isinstance(o, ABCRest):
-                    countRest += 1
+            # count the token classes by name
+            istCount = Counter(o.__class__.__name__ for o in tokens)
 
-            self.assertEqual(countNotes + countRest, noteTokens)
+            for abcClass, soll in sollCounter.items():
+                self.assertIn(abcClass, istCount,
+                        f'No tokens of class "{abcClass}" found in testfile {testfile}')
+                self.assertEqual(soll, istCount[abcClass],
+                        f'Wrong number of "{abcClass}" tokens found in testfile {testfile}')
 
-            self.assertEqual(countChords, chordTokens)
 
     def testRe(self):
 
@@ -3494,7 +3512,6 @@ class Test(unittest.TestCase):
 
     def testNoteParse(self):
         from music21 import key
-        # breakpoint()
         self.assertEqual(ABCNote('c').getPitchName(keySignature=key.KeySignature(3)), ('C#5', False))
         self.assertEqual(ABCNote('c').getPitchName(), ('C5', None))
         self.assertEqual(ABCNote('^c').getPitchName(), ('C#5', True))
@@ -3531,7 +3548,6 @@ class Test(unittest.TestCase):
                 self.assertEqual(bar.rightBarToken, None, f'wrong right bar token for bar #{i}')
             else:
                 self.assertEqual(bar.rightBarToken.src, r, f'wrong right bar token for bar #{i}')
-
 
 
     def testSplitByReferenceNumber(self):
@@ -3599,192 +3615,117 @@ class Test(unittest.TestCase):
         af.close()
         self.assertEqual(len(ah), 101)
 
-    def testSlurs(self):
+    def testVoiceOverlay(self):
+        # @TODO:
+        pass
+
+    def testClef(self):
         from music21.abcFormat import testFiles
         ah = ABCHandler()
-        ah.process(testFiles.slurTest)
-        self.assertEqual(len(ah), 70)  # number of tokens
+        ah.process(testFiles.testClef)
+        self.assertEqual(36, len(ah.tokens),
+                         f'Number of tokens in "testClef"')
+
+        clef_token = [t for t in ah.tokens if isinstance(t, ABCClef)]
+        clef_obj =  [t.clef is not None for t in clef_token]
+
+        self.assertEqual(13, len(clef_token), f'Number of clef token')
+        self.assertEqual(13, len(clef_obj), f'Number of known clefs')
 
     def testTies(self):
         from music21.abcFormat import testFiles
         ah = ABCHandler()
         ah.process(testFiles.tieTest)
-        self.assertEqual(len(ah), 73)  # number of tokens
+        self.assertEqual(73, len(ah.tokens),
+                         f'Number of tokens in "tieTest"')
 
-    def testCresc(self):
+        ist_start = sum(t.tie =='start' for t in ah.tokens if
+                            isinstance(t, ABCGeneralNote))
+        ist_stop = sum(t.tie =='stop' for t in ah.tokens if
+                            isinstance(t, ABCGeneralNote))
+
+        self.assertEqual(3, ist_start, f'Number of tied notes (start)')
+        self.assertEqual(3, ist_stop, f'Number of tied notes (stop)')
+
+    def testSpanner(self):
+        testData = [
+            ('crescTest', ABCCrescStart, 1, 75),
+            ('dimTest', ABCDimStart, 1, 75),
+            ('slurTest', ABCSlurStart, 7, 70),
+        ]
+        for testfile, abcClass, soll, total in testData:
+            from music21.abcFormat import testFiles
+            abc = getattr(testFiles, testfile)
+            ah = ABCHandler()
+            header, voice = ah.process(abc)
+
+            self.assertEqual(total, len(ah.tokens),
+                             f'Number of tokens in "{testfile}"')
+
+            ist = sum(isinstance(t, abcClass) for t in voice[0].tokens)
+
+            self.assertEqual(soll, ist,
+                             f'Number of spanners of type "{abcClass}" in "{testfile}"')
+
+    def testExpressions(self):
+        # @TODO: no testdata !
         from music21.abcFormat import testFiles
-        ah = ABCHandler()
-        ah.process(testFiles.crescTest)
-        self.assertEqual(len(ah), 75)
-        tokens = ah.tokens
-        i = 0
-        for t in tokens:
-            if isinstance(t, ABCCrescStart):
-                i += 1
-        self.assertEqual(i, 1)
+        testData = [
 
-    def testDim(self):
-        from music21.abcFormat import testFiles
-        ah = ABCHandler()
-        ah.process(testFiles.dimTest)
-        self.assertEqual(len(ah), 75)
-        tokens = ah.tokens
-        i = 0
-        for t in tokens:
-            if isinstance(t, ABCDimStart):
-                i += 1
-        self.assertEqual(i, 1)
+        ]
 
-    def testStaccato(self):
-        from music21.abcFormat import testFiles
-        ah = ABCHandler()
-        ah.process(testFiles.staccTest)
-        self.assertEqual(len(ah), 80)
+        for testfile, abcClass, m21Class, soll, total in testData:
+            abc = getattr(testFiles, testfile)
+            ah = ABCHandler()
+            ah.process(abc)
+            self.assertEqual(total, len(ah.tokens),
+                             f'Number of tokens in "{testfile}"')
+            ist = 0
+            for t in voice[0].tokens:
+                if isinstance(t, ABCGeneralNote):
+                    if issubclass(abcClass, ABCExpression):
+                        ist += any(isinstance(a.m21Object(), m21Class) for a in t.expressions)
 
-    def testBow(self):
-        from music21.abcFormat import testFiles
-        ah = ABCHandler()
-        header, voices = ah.process(testFiles.bowTest)
-        voiceHandler = voices[0]
-        self.assertEqual(len(ah), 83)
-        upbow = 0
-        downbow = 0
-        for t in voiceHandler.tokens:
-            if isinstance(t, ABCArticulation):
-                if t.m21Class == articulations.UpBow:
-                    upbow += 1
-                elif t.m21Class == articulations.DownBow:
-                    downbow += 1
-        self.assertEqual(upbow, 2)
-        self.assertEqual(downbow, 1)
+            self.assertEqual(soll, ist,
+                             f'Number of assigned articulations of type "{m21Class}" in "{testfile}"')
 
-    def testAcc(self):
-        from music21.abcFormat import testFiles
-        from music21 import abcFormat
-        ah = abcFormat.ABCHandler()
 
-        header, voices = ah.process(testFiles.accTest)
-        voiceHandler  = voices[0]
-        # noinspection SpellCheckingInspection
-        tokensCorrect = '''<music21.abcFormat.ABCReferenceNumber 'X: 979'>
-<music21.abcFormat.ABCTitle 'T: Staccato test, plus accents and tenuto marks'>
-<music21.abcFormat.ABCMeter 'M: 2/4'>
-<music21.abcFormat.ABCUnitNoteLength 'L: 1/16'>
-<music21.abcFormat.ABCUserDefinition 'U: M = !tenuto!'>
-<music21.abcFormat.ABCKey 'K: Edor'>
-<music21.abcFormat.ABCNote 'B,2'>
-<music21.abcFormat.ABCBar '|'>
-<music21.abcFormat.ABCDimStart '!diminuendo(!'>
-<music21.abcFormat.ABCArticulation '.'>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCNote '^D'>
-<music21.abcFormat.ABCArticulation '.'>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCTie '-'>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCParenStop '!diminuendo)!'>
-<music21.abcFormat.ABCSlurStart '('>
-<music21.abcFormat.ABCTuplet '(3'>
-<music21.abcFormat.ABCArticulation '.'>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCArticulation '.'>
-<music21.abcFormat.ABCNote 'F'>
-<music21.abcFormat.ABCArticulation '.'>
-<music21.abcFormat.ABCArticulation '!accent!'>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCNote 'B'>
-<music21.abcFormat.ABCNote 'A'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCBar '|'>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCNote '^D'>
-<music21.abcFormat.ABCArticulation '!tenuto!'>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCNote 'F'>
-<music21.abcFormat.ABCTuplet '(3'>
-<music21.abcFormat.ABCSlurStart '('>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCTie '-'>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCNote 'B'>
-<music21.abcFormat.ABCArticulation '!straccent!'>
-<music21.abcFormat.ABCArticulation '!tenuto!'>
-<music21.abcFormat.ABCNote 'A'>
-<music21.abcFormat.ABCBar '|'>
-<music21.abcFormat.ABCSlurStart '('>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCSlurStart '('>
-<music21.abcFormat.ABCNote '^D'>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCNote 'F'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCTuplet '(3'>
-<music21.abcFormat.ABCSlurStart '('>
-<music21.abcFormat.ABCArticulation '!straccent!'>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCArticulation '!accent!'>
-<music21.abcFormat.ABCNote 'F'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCNote 'A'>
-<music21.abcFormat.ABCTie '-'>
-<music21.abcFormat.ABCNote 'A'>
-<music21.abcFormat.ABCBar '|'>
-<music21.abcFormat.ABCSlurStart '('>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCNote '^D'>
-<music21.abcFormat.ABCNote 'E'>
-<music21.abcFormat.ABCNote 'F'>
-<music21.abcFormat.ABCTuplet '(3'>
-<music21.abcFormat.ABCSlurStart '('>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCNote 'F'>
-<music21.abcFormat.ABCNote 'G'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCParenStop ')'>
-<music21.abcFormat.ABCNote 'B'>
-<music21.abcFormat.ABCNote 'A'>
-<music21.abcFormat.ABCBar '|'>
-<music21.abcFormat.ABCNote 'G6'>
-'''.splitlines()
-        tokensReceived = [str(x) for x in voiceHandler.tokens]
-        self.assertEqual(tokensCorrect, tokensReceived)
+    def testArticulations(self):
+        testData = [
+            ('bowTest', ABCArticulation, articulations.UpBow, 2, 83),
+            ('bowTest', ABCArticulation, articulations.DownBow, 1, 83),
+            ('accTest', ABCArticulation, articulations.StrongAccent, 2, 87),
+            ('accTest', ABCArticulation, articulations.Accent, 2, 87),
+            ('accTest', ABCArticulation, articulations.Tenuto, 2, 87),
+            ('accTest', ABCArticulation, articulations.Staccato, 5, 87),
+            ('staccTest', ABCArticulation, articulations.Staccato, 5, 80)
+        ]
 
-        self.assertEqual(len(ah), 87)
-        tenuto = 0
-        straccent = 0
-        accent = 0
-        for t in voiceHandler.tokens:
-            if isinstance(t, abcFormat.ABCArticulation):
-                if t.m21Class == articulations.StrongAccent:
-                    straccent += 1
-                elif t.m21Class == articulations.Accent:
-                    accent += 1
-                elif t.m21Class == articulations.Tenuto:
-                    tenuto += 1
+        for testfile, abcClass, m21Class, soll, total in testData:
+            from music21.abcFormat import testFiles
+            abc = getattr(testFiles, testfile)
+            ah = ABCHandler()
+            ah.process(abc)
+            self.assertEqual(total, len(ah.tokens),
+                             f'Number of tokens in "{testfile}"')
+            ist = 0
+            for t in ah.tokens:
+                if isinstance(t, ABCGeneralNote):
+                    ist +=any( a.m21Object().__class__ == m21Class for a in t.articulations)
 
-        self.assertEqual(tenuto, 2)
-        self.assertEqual(straccent, 2)
-        self.assertEqual(accent, 2)
+            self.assertEqual(soll, ist,
+                    f'Number of assigned articulations of type "{m21Class}" in "{testfile}"')
+
 
     def testGrace(self):
         from music21.abcFormat import testFiles
         ah = ABCHandler()
-        ah.process(testFiles.graceTest)
+        header, voices = ah.process(testFiles.graceTest)
         self.assertEqual(len(ah), 85)
 
-    def testGuineaPig(self):
-        from music21.abcFormat import testFiles
-        ah = ABCHandler()
-        ah.process(testFiles.guineapigTest)
-        self.assertEqual(len(ah), 105)
+        graceNotes = sum( t.inGrace for t in voices[0].tokens if isinstance(t, ABCGeneralNote))
+        self.assertEqual(graceNotes, 11)
+
 
 
 def import_all_abc():
