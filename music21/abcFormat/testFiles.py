@@ -486,13 +486,14 @@ K: Edor
 B,2|!diminuendo(!KE^DkK.uvME-E!diminuendo)! !GARBAGE! {CDEFGAB} ((3.G.FG){BA}BA)|{E^DMEF} E^DMEF(3(G-GG))BA|(E(^DE)F) (3(GF)G)A-A|(E^DEF (3(GFG)))BA|G6
 '''
 
+
 # noinspection SpellCheckingInspection
 testPrimitive = '''
 X:1
 T: text
 V:1
 M:4/4
-C: F.J.Schubert
+C: F.Schubert
 ed|cecA B2ed|cAcA E2ed|cecA B2ed|c2A2 A2:|
 K:G
 I: codepage

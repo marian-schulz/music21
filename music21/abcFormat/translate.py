@@ -1218,7 +1218,7 @@ class Test(unittest.TestCase):
 
 if __name__ == '__main__':
     import music21
-    irl2 = music21.corpus.parse('irl', number=2,forceSource=True)
+    irl2 = music21.corpus.parse('irl', number=2, forceSource=True)
     music21.mainTest(Test)
 
 

@@ -138,12 +138,11 @@ def makeMetaDataRegexpr(tag: str):
     tag = tag[0]
 
     if tag in METADATA_TEXT_TYPE_FIELDS:
-        regex = [fr'^\s*{tag}:.*([\\][\n]{tag}:.+)+[\n]',
-                 fr'^\s*{tag}:.*([\n]+:.+)+[\n]']
+        regex = [
+            fr'^\s*{tag}:.*(([\\]\n\s*{tag}:[^\n\\]+)|' +
+            r'([\\]?\n\s*[+]:([^\n\\]|[\\](?!\n))+))*$']
     else:
-        regex = []
-
-    regex.append(rf'^\s*{tag}:.*')
+        regex = [rf'^\s*{tag}:.*']
 
     if tag in METADATA_INLINE_FIELDS:
         regex.append(rf'\[{tag}:[^\]\n%]*\]')
@@ -258,7 +257,7 @@ class ABCAnnotations(ABCMark):
     ABC text Annotations are set in quotation marks,
     the first charakter indicate where the annotation has
     set relative to the next note
-    ^ : above the noe
+    ^ : above the note
     _ : below the note
     < : left of the note
     > : right of the note
@@ -410,9 +409,9 @@ class ABCMetadata(ABCToken):
             # Text fields can extend over several lines.
             # Either by '+:' on the next line or by an '\' on the
             # end of the line. (Only if the next line has the same tag).
-            lines = data.split(r'\n')
+            lines = data.split('\n')
             # for the first line the tag is already speperated
-            _data = [lines[0].rstrip(r'\\').lstrip()]
+            _data = [lines[0].rstrip(r'\\').strip()]
             for line in lines[1:]:
                 # remove leading tag
                 line = line.split(':', 1)[1]
@@ -597,11 +596,8 @@ class ABCVoice(ABCMetadata,  ABCClef):
             v = m.group()
             if k == 'id':
                 self.voiceId = v
-            elif k == 'name':
-                self.name = v.split('=')[1].strip().strip('"')
-            elif k == 'subname':
-                self.subname = v.split('=')[1].strip().strip('"')
-
+            elif k in ['name', 'subname']:
+                setattr(self, k, v.split('=')[1].strip().strip('"'))
 
 class ABCTempo(ABCMetadata):
     """
@@ -1079,18 +1075,8 @@ class ABCLyrics(ABCMetadata):
     TOKEN_REGEX = makeMetaDataRegexpr('w')
 
     def __init__(self, src: str):
-        r'''
-        >>> abc = ('w: ||A- ve Ma- ri- -\\nw: |a! Jung- - - frau *|')
-        >>> w = abcFormat.tokenize(abc)
-        >>> next(w).syllables
-        ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
-
-        >>> abc = ('w: | \\n+:|A- ve Ma- ri- -\\nw: |a! Jung- - - frau *|')
-        >>> w = abcFormat.tokenize(abc)
-        >>> next(w).syllables
-        ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
-
-        >>> abc = (r'w: ||A- ve Ma- ri- -|a! Jung- - - frau *|')
+        '''
+        >>> abc = ('w: ||A- ve Ma- ri- -|a! Jung- - - frau *|')
         >>> w = abcFormat.tokenize(abc)
         >>> next(w).syllables
         ['|', '|', 'A-', 've', 'Ma-', 'ri-', '-', '|', 'a!', 'Jung-', '-', '-', 'frau', '*', '|']
@@ -3524,6 +3510,32 @@ class Test(unittest.TestCase):
         # I have removed all here, because of relevanz
         pass
 
+    def testTextLineContinue(self):
+        # Test the regular expression & the test post processing
+        matchThis = [
+            'w: Line \\\nw: continues \\\nw:here',
+            'w: Line \\\nw: continues here\n',
+            'w: Line\\\nw: continues here',
+            'C: Line \n+: continues here\n',
+            'C: Line\n+: continues here',
+            'C: Line \n+: continues\n+:here\n',
+
+            'C: Line\n+: continues here\n',
+            'O: Line \n+: continues here',
+            'w: Line\\\nw: continues\n+:here\n',
+            'w: Line \\\n+: continues here',
+            'w: Line\n+: continues\\\nw:here\n'
+        ]
+        for caseId, case in enumerate(matchThis):
+            t = list(tokenize(case))
+            self.assertEqual(t[0].data, 'Line continues here', (caseId, case))
+
+        # Test if the \\ is ignored in the middle of the string
+        t = list(tokenize('w: Line \\ continues here'))
+        self.assertEqual(t[0].data, 'Line \ continues here')
+
+
+
     def testTokenMetadata(self):
         from music21.abcFormat import testFiles
 
@@ -3847,18 +3859,18 @@ K:Gm
     # us = environment.UserSettings()
     # us['musicxmlPath'] = '/data/local/MuseScore-3.5.2.312125617-x86_64.AppImage'
     # sys.arg test options will be used in mainTest()
-    #with pathlib.Path('avemaria.abc').open() as f:
+    with pathlib.Path('avemaria.abc').open() as f:
     #with pathlib.Path('Unendliche_Freude.abc').open() as f:
     #for file in pathlib.Path('.').glob('*.abc'):
     #    with file.open() as f:
-   #         print(file)
-   #         abc = f.read()
-   #         s = music21.converter.parse(abc, forceSource=True, format='abc')
-    #        #s.show()
-    with pathlib.Path('Unendliche_Freude.abc').open() as f:
-        avem = f.read()
+    #         print(file)
+    #         abc = f.read()
+    #         s = music21.converter.parse(abc, forceSource=True, format='abc')
+    #         #s.show()
+    #with pathlib.Path('Unendliche_Freude.abc').open() as f:
+    #    avem = f.read()
     #with pathlib.Path('tests/clefs.abc').open() as f:
-    #   avem = f.read()
+       avem = f.read()
     b= music21.converter.parse(avem, forceSource=True, format='abc')
     b.show()
 
