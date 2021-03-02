@@ -489,83 +489,119 @@ class ABCClef():
     up or down if no octave modifier has explicitly set.
     When specifying the name, the 'clef=' can also be omitted
 
-    >>> md = abcFormat.ABCClef('clef=treble')
+    >>> md = abcFormat.ABCClef('clef="treble"').clef_name
+    treble
+
+    >>> abcFormat.ABCClef('bass').clef_name
+    bass
 
     >>> md = abcFormat.ABCClef('bass-8')
-    >>> md.clef
-    <music21.clef.Bass8vbClef>
-    >>> md.octave
-    -1
+    >>> md.clef_name
+    bass8vb
 
-    >>> md = abcFormat.ABCClef('clef="treble+8"')
-    >>> md.clef
-    <music21.clef.Treble8vaClef>
-    >>> md.octave
-    1
+    >>> md = abcFormat.ABCClef('bass -8va')
+    >>> md.clef_name
+    bass8va
 
-    >>> md = abcFormat.ABCClef('clef=treble+8 octave=-2 octave=-2 sname="T"')
-    >>> md.clef
-    <music21.clef.Treble8vaClef>
+    >>> md = abcFormat.ABCClef('clef=treble+8 octave=-2 transpose="14"')
+    >>> md.clef_name
+    treble8va
     >>> md.octave
     -2
+    >>> md.transpose
+    14
     """
 
-    CLEF_NAMES = {
-        'g1': clef.FrenchViolinClef,
-        'treble': clef.TrebleClef, 'g2': clef.TrebleClef, 'g': clef.TrebleClef,
-        'treble-8': clef.Treble8vbClef, 'treble+8': clef.Treble8vaClef,
-        'bass3': clef.CBaritoneClef, 'baritone': clef.CBaritoneClef,
-        'f3': clef.CBaritoneClef, 'bass': clef.BassClef,
-        'f': clef.BassClef, 'f4': clef.BassClef,
-        'bass-8': clef.Bass8vbClef,
-        'bass+8': clef.Bass8vaClef, 'f5': clef.SubBassClef,
-        'tenor': clef.TenorClef, 'c4': clef.TenorClef,
-        'alto': clef.AltoClef, 'c3': clef.AltoClef, 'c': clef.AltoClef,
-        'alto1': clef.SopranoClef, 'soprano': clef.SopranoClef,
-        'c1': clef.SopranoClef, 'alto2': clef.MezzoSopranoClef,
-        'mezzosoprano': clef.MezzoSopranoClef, 'c2': clef.MezzoSopranoClef
+    _NAMES = ['treble', 'treble8vb', 'treble8va', 'bass', 'bass8va',
+              'bass8vb', 'mezzosoprano', 'soprano', 'baritone', 'alto',
+              'tenor', 'percussion', 'g1', 'g2', 'f3', 'f4', 'f5', 'c1',
+              'c2', 'c3', 'c4']
+
+    _ALIAS = {
+        'perc': 'percussion',
+        'treble-8': 'treble8vb',
+        'treble+8': 'treble8va',
+        'bass-8': 'bass8vb',
+        'bass+8': 'bass8va',
+        'alto1': 'soprano',
+        'alto2': 'mezzosoprano',
+        'bass3': 'baritone',
     }
 
-    def __init__(self, data: str):
-        self.transpose = 0
-        self.octave = None
-        self.clef = None
-        self.clef_name = None
+    def __init__(self, data: str=''):
+        self._transpose: Optional[int] = None
+        self._octave: Optional[int] = None
+        self._clef_name: str = ''
+        self._ottava: str = ''
 
-        # list of unamed matches
+        # list of unamed properties
         unamed  = []
         for m in CLEF_RE.finditer(data):
             k = m.lastgroup
             v = m.group()
             if k in ['transpose', 'octave', 'clef_name']:
-                setattr(self, k, v.split('=')[1].lower().strip().strip('"'))
+                setattr(self, k, v.split('=')[1].lower().strip('"').strip())
             else:
                 unamed.append(v.lower().strip())
 
         # the clef name is allowed without clef=<name>
         if self.clef_name is None:
             for tag in unamed:
-                if tag in ABCClef.CLEF_NAMES:
+                if tag in ABCClef._NAMES:
                     self.clef_name = tag
-                if tag == '-8va':
-                    self.octave = -1
+                elif tag in ABCClef._ALIAS:
+                    self.clef_name = ABCClef._ALIAS[tag]
 
-        if self.clef_name:
-            try:
-                self.clef = ABCClef.CLEF_NAMES[self.clef_name]()
-            except KeyError:
-                environLocal.printDebug([ f'No clef for "{self.clef_name}" found.'])
+        if self.clef_name in ABCClef._ALIAS:
+            self.clef_name = ABCClef._ALIAS[self.clef_name]
+        elif self.clef_name not in ABCClef._NAMES:
+            if self.clef_name is not None:
+                environLocal.printDebug([f'Unknown clef name "{self.clef_name}" in abc source.'])
 
-        if self.octave is None:
-            self.octave = self.clef.octaveChange if self.clef else None
-        else:
+
+        # Optional ottava syntax
+        # change the octave and for bass & treble the related clefs
+        # if no
+        if self.clef_name in ['bass', 'treble']:
+            if '-8va' in unamed:
+                self.clef_name += '8va'
+            elif '-8vb' in unamed:
+                self.clef_name += '8vb'
+
+        if self.octave is not None:
             self.octave = int(self.octave)
 
-        self.transpose = int(self.transpose)
+        if self.transpose is not None:
+            self.transpose = int(self.transpose)
 
-    def getClefObject(self):
-        return self.clef
 
+    def join(self, other: 'ABCClef'):
+        '''
+           Creates a new clef Object, with properties of this and other clef.
+        '''
+        clf = ABCClef()
+        clf._transpose = self._transpose if other._transpose is None else other._transpose
+        clf._octave = self._octave if other._octave is None else other._octave
+        clf._name = self._name if other._name is None else other._name
+        clf._transposing_clef = ''
+
+    @property
+    def transpose(self):
+        if self._transpose is None:
+            return 0
+        return self._transpose
+
+    @property
+    def octave(self):
+        if self._octave is None:
+            return 0
+        return self._octave
+
+    @property
+    def clef_name(self):
+        if self._clef_name:
+            return f"{self._clef_name}{self.otava}"
+        return 'treble'
 
 class ABCVoice(ABCMetadata,  ABCClef):
 
@@ -573,13 +609,37 @@ class ABCVoice(ABCMetadata,  ABCClef):
 
     def __init__(self, src):
         r"""
-        >>> v = abcFormat.ABCVoice('V:1 nm="piano" subname=accompaniment')
+        The first value (required) of the field is the ID of the voice.
+        Following optional properties follow the scheme property=<value>.
+        Values can appear with or without enclosing quotation marks.
+
+        The voice field can additionally contain all clef properties (see ABClef)
+
+        ABC voice properties:
+            name=<voice name>
+                Printed on the left of the first staff.
+                The name of the property is sometimes abbreviated as 'nm'
+                Corresponds to the music21 property "partName"
+
+            subname=<voice subname>:
+                Printed on the left of all staves but the first one.
+                The name of the property is sometimes abbreviated as 'snm' or 'sname'
+                Corresponds to the music21 property "partAbbreviation"
+
+            stem=<up/down>
+                Note stem direction.
+                @TODO: not implemented in translator
+
+
+        >>> v = abcFormat.ABCVoice('V:1 nm="piano" subname=accompaniment stem=down')
         >>> v.voiceId
         '1'
         >>> v.name
         'piano'
         >>> v.subname
         'accompaniment'
+        >>> v.stem
+        'down'
 
         We got also clef informations from a voice field via ABCClef
         >>> v = abcFormat.ABCVoice("V:1 treble")
@@ -588,16 +648,29 @@ class ABCVoice(ABCMetadata,  ABCClef):
         """
         super().__init__(src)
         ABCClef.__init__(self, self.data)
+
         self.voiceId: str = ''
         self.name : Optional[str] = None
         self.subname: Optional[str] = None
+        self.stem: Optional[str] = None
+
         for m in VOICE_RE.finditer(self.data):
             k = m.lastgroup
             v = m.group()
             if k == 'id':
                 self.voiceId = v
-            elif k in ['name', 'subname']:
+            elif k in ['name', 'subname', 'stem']:
                 setattr(self, k, v.split('=')[1].strip().strip('"'))
+
+        if not self.voiceId:
+            raise ABCTokenException('Required voice ID missing in abc voice field.')
+
+        if self.stem is not None:
+            self.stem = self.stem.lower()
+            if self.stem not in ['up', 'down']:
+                environLocal.warn(f'Illegal value "{self.stem}" for the voice property stem (up/down).')
+                self.stem = None
+
 
 class ABCTempo(ABCMetadata):
     """
