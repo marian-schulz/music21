@@ -61,6 +61,9 @@ import unittest
 from typing import Union, Optional, List, Tuple, Type, Dict, Callable, Iterator, NamedTuple
 import itertools
 
+from collections import defaultdict
+from copy import deepcopy
+
 from music21 import common
 from music21 import environment
 from music21 import exceptions21
@@ -196,11 +199,6 @@ class ABCToken(prebase.ProtoM21Object):
 
     def m21Object(self):
         return None
-
-
-class ABCTune(NamedTuple):
-    header: 'ABCHandler'
-    voices: List['ABCHandlerVoice']
 
 
 class ABCMark(ABCToken):
@@ -603,7 +601,7 @@ class ABCClef():
             return f"{self._clef_name}{self.otava}"
         return 'treble'
 
-class ABCVoice(ABCMetadata,  ABCClef):
+class ABCVoiceField(ABCMetadata, ABCClef):
 
     TOKEN_REGEX = makeMetaDataRegexpr('V')
 
@@ -631,7 +629,7 @@ class ABCVoice(ABCMetadata,  ABCClef):
                 @TODO: not implemented in translator
 
 
-        >>> v = abcFormat.ABCVoice('V:1 nm="piano" subname=accompaniment stem=down')
+        >>> v = abcFormat.ABCVoiceField('V:1 nm="piano" subname=accompaniment stem=down')
         >>> v.voiceId
         '1'
         >>> v.name
@@ -642,7 +640,7 @@ class ABCVoice(ABCMetadata,  ABCClef):
         'down'
 
         We got also clef informations from a voice field via ABCClef
-        >>> v = abcFormat.ABCVoice("V:1 treble")
+        >>> v = abcFormat.ABCVoiceField("V:1 treble")
         >>> v.clef
         <music21.clef.TrebleClef>
         """
@@ -1176,10 +1174,7 @@ class ABCVoiceOverlay(ABCToken):
     TOKEN_REGEX = '&'
     def __init__(self, src):
         super().__init__(src)
-        self.handler : 'ABCHandlerVoiceOverlay' = ABCHandlerVoiceOverlay()
-
-    def append(self, token: ABCToken):
-        self.handler.tokens.append(token)
+        self.handler : Optional['ABCVoice'] = None
 
 
 class ABCSymbol(ABCToken):
@@ -2389,18 +2384,10 @@ class ABCHandler():
        New in v6.2 -- lineBreaksDefinePhrases -- does not yet do anything
        '''
 
-    def __init__(self, tokens: Optional[List[ABCToken]] = None, abcVersion: Optional[ABCVersion] = None):
+    def __init__(self, tokens: Optional[List[ABCToken]] = None):
         # tokens are ABC objects import n a linear stream
-        self.abcVersion: Optional[ABCVersion] = abcVersion
         self.tokens: List[ABCToken] = [] if tokens is None else tokens
-        self.src: str = ''
-
-    def tokenize(self, src: str):
-        self.src = src
-        if self.abcVersion is None:
-            self.abcVersion = parseABCVersion(src=src)
-
-        self.tokens = list(tokenize(src, self.abcVersion))
+        self._fields = {}
 
     def __len__(self):
         return len(self.tokens)
@@ -2439,145 +2426,6 @@ class ABCHandler():
         ah.tokens = self.tokens + other.tokens
         return ah
 
-    def splitByVoice(self) -> ABCTune:
-        r"""
-        Split the tokens of this ABCHandler into al seperat ABCHandlerVoices for each voice.
-        Each voice handler got the all the common metadata token of the abc tune header
-
-        Also return an ABCHandler with all the common Metadata.
-
-        The abc header with the common metadata ends with the first 'K:' field or with the
-        first non metadata token (bad abc coding).
-
-        ABC directives are treated as metadata instructions.
-
-        We assume there is a voice with the id '1'.  All tokens in the body that
-        cannot be assigned to a voice are assigned to the voice '1'. This happens if no
-        voices are defined (monophonic tune) or because bad abc coding.
-
-        >>> abcStr = 'M:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||'
-        >>> ah = abcFormat.ABCHandler()
-        >>> abcTune = ah.process(abcStr)
-        >>> abcTune.voices[0]
-        <music21.abcFormat.ABCHandlerVoice object at 0x...>
-        >>> [t.src for t in abcTune.voices[0].tokens]
-        ['M:6/8', 'L:1/8', 'K:G', 'B3', 'A3', '|', 'G6', '|', 'B3', 'A3', '|', 'G6', '||']
-
-        >>> abcStr = ('M:6/8\nL:1/8\nV: * clef=treble\nK:G\nV:1 name="Whistle" ' +
-        ...     'snm="wh"\nB3 A3 | G6 | B3 A3 | G6 ||\nV:2 name="violin" ' +
-        ...     'snm="v"\nBdB AcA | GAG D3 | BdB AcA | GAG D6 ||\nV:3 name="Bass" ' +
-        ...     'snm="b" clef=bass\nD3 D3 | D6 | D3 D3 | D6 ||')
-        >>> ah = abcFormat.ABCHandler()
-        >>> ah.tokenize(abcStr)
-        >>> abcTune = ah.splitByVoice()
-        >>> [t.src for t in abcTune.voices[0].tokens]
-        ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:1 name="Whistle" snm="wh"', 'B3', 'A3',
-        '|', 'G6', '|', 'B3', 'A3', '|', 'G6', '||']
-        >>> [t.src for t in abcTune.voices[1].tokens]
-        ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:2 name="violin" snm="v"', 'B', 'd', 'B', 'A',
-        'c', 'A', '|', 'G', 'A', 'G', 'D3', '|', 'B', 'd', 'B', 'A', 'c', 'A', '|', 'G', 'A', 'G', 'D6', '||']
-        >>> [t.src for t in abcTune.voices[2].tokens]
-        ['M:6/8', 'L:1/8', 'V: * clef=treble', 'K:G', 'V:3 name="Bass" snm="b" clef=bass',
-        'D3', 'D3', '|', 'D6', '|', 'D3', 'D3', '|', 'D6', '||']
-        """
-        activeVoice = []
-        lastOverlayToken : ABCVoiceOverlay = None
-
-        voices = {'1': activeVoice }
-        tokenIter = iter(self.tokens)
-        header = []
-        for token in tokenIter:
-            if isinstance(token, ABCMetadata):
-                header.append(token)
-                if isinstance(token, ABCKey):
-                    # Stop, regular end of the tune header
-                    break
-            else:
-                # Not a valid token in Header
-                # We asume the body starts here
-                # put the token back on top of the iterator
-                tokenIter = itertools.chain([token], tokenIter)
-                break
-        else:
-            # there are no body tokens, maybe this is an abc include file ?
-            return ABCTune(header=ABCHandler(header), voices=[])
-
-
-        for token in tokenIter:
-            if isinstance(token, ABCVoice):
-                if token.voiceId is None or token.voiceId == '*':
-                    # error in abc code, the voice has no id or
-                    # is the 'every voice' id (illegal in body)
-                    # skip this token
-                    continue
-
-                # change the active voice
-                if token.voiceId in voices:
-                    activeVoice = voices[token.voiceId]
-                else:
-                    activeVoice = []
-                    voices[token.voiceId] = activeVoice
-
-                lastOverlayToken = None
-
-            elif isinstance(token, ABCBar):
-                lastOverlayToken = None
-
-            elif isinstance(token, ABCVoiceOverlay):
-                lastOverlayToken = token
-                activeVoice.append(token)
-                continue
-
-            if lastOverlayToken:
-                lastOverlayToken.append(token)
-            else:
-                activeVoice.append(token)
-
-        voiceHandler = []
-        # Create a new Handler for each voice with the header tokens first.
-        for voiceId , voiceTokens in voices.items():
-            voice_header = [t for t in header if t.tag in "VLKMUI"]
-            vh = ABCHandlerVoice(voiceId=voiceId,
-                                 tokens=voice_header + voiceTokens,
-                                 abcVersion=self.abcVersion)
-            if vh.hasNotes():
-                voiceHandler.append(vh)
-
-        # Return the header seperat
-        return ABCTune(header=ABCHandler(header), voices=voiceHandler)
-
-    def definesReferenceNumbers(self):
-        '''
-        Return True if this token structure defines more than 1 reference number,
-        usually implying multiple pieces encoded in one file.
-
-
-        >>> abcStr = 'X:5\\nM:6/8\\nL:1/8\\nK:G\\nB3 A3 | G6 | B3 A3 | G6 ||'
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStr)
-        >>> ah.definesReferenceNumbers()  # only one returns False
-        False
-
-
-        >>> abcStr = 'X:5\\nM:6/8\\nL:1/8\\nK:G\\nB3 A3 | G6 | B3 A3 | G6 ||\\n'
-        >>> abcStr += 'X:6\\nM:6/8\\nL:1/8\\nK:G\\nB3 A3 | G6 | B3 A3 | G6 ||'
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStr)
-        >>> ah.definesReferenceNumbers()  # two tokens so returns True
-        True
-        '''
-        if not self.tokens:
-            raise ABCHandlerException('must process tokens before calling split')
-
-        count = 0
-        for t in self.tokens:
-            if isinstance(t, ABCReferenceNumber):
-                count += 1
-                if count == 2:
-                    return True
-
-        return False
-
     def hasNotes(self, noRests: bool = False) -> bool:
         '''
         If tokens are processed, return True if ABCNote or
@@ -2603,127 +2451,11 @@ class ABCHandler():
         else:
             return any(isinstance(t, ABCGeneralNote) for t in self.tokens)
 
-    def splitByReferenceNumber(self) -> Dict[int, 'ABCHandler']:
-        # noinspection PyShadowingNames
-        r'''
-        Split tokens by reference numbers.
 
-        Returns a dictionary of ABCHandler instances, where the reference number
-        is used to access the music. If no reference numbers are defined,
-        the tune is available under the dictionary entry None.
-
-        >>> abcStr = 'X:5\nM:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||\n'
-        >>> abcStr += 'X:6\nM:6/8\nL:1/8\nK:G\nB3 A3 | G6 | B3 A3 | G6 ||'
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStr)
-        >>> len(ah)
-        28
-        >>> ahDict = ah.splitByReferenceNumber()
-        >>> 5 in ahDict
-        True
-        >>> 6 in ahDict
-        True
-        >>> 7 in ahDict
-        False
-
-        Each entry is its own ABCHandler object.
-
-        >>> ahDict[5]
-        <music21.abcFormat.ABCHandler object at 0x10b0cf5f8>
-        >>> len(ahDict[5].tokens)
-        14
-
-        Header information (except for comments) should be appended to all pieces.
-
-        >>> abcStrWHeader = '%abc-2.1\nO: Irish\n' + abcStr
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStrWHeader)
-        >>> len(ah)
-        29
-        >>> ahDict = ah.splitByReferenceNumber()
-        >>> 5 in ahDict
-        True
-        >>> 6 in ahDict
-        True
-        >>> 7 in ahDict
-        False
-
-        Did we get the origin header in each score?
-
-        >>> ahDict[5].tokens[0]
-        <music21.abcFormat.ABCOrigin 'O: Irish'>
-        >>> ahDict[6].tokens[0]
-        <music21.abcFormat.ABCOrigin 'O: Irish'>
-        '''
-        if not self.tokens:
-            raise ABCHandlerException('must process tokens before calling split')
-
-        ahDict = {}
-
-        # tokens in this list are prepended to all tunes:
-        prependToAllList = []
-        activeTokens = []
-        currentABCHandler = None
-
-        for t in self.tokens:
-            if isinstance(t, ABCReferenceNumber):
-                if currentABCHandler is not None:
-                    currentABCHandler.tokens = activeTokens
-                    activeTokens = []
-                currentABCHandler = ABCHandler(abcVersion=self.abcVersion)
-                referenceNumber = int(t.data)
-                ahDict[referenceNumber] = currentABCHandler
-
-            if currentABCHandler is None:
-                prependToAllList.append(t)
-            else:
-                activeTokens.append(t)
-
-        if currentABCHandler is not None:
-            currentABCHandler.tokens = activeTokens
-
-        if not ahDict:
-            ahDict[None] = ABCHandler()
-
-        for thisABCHandler in ahDict.values():
-            thisABCHandler.tokens = prependToAllList[:] + thisABCHandler.tokens
-
-        return ahDict
-
-    def definesMeasures(self):
-        r'''
-        Returns True if this token structure defines Measures in a normal Measure form.
-        Otherwise False
-
-
-        >>> abcStr = ('M:6/8\nL:1/8\nK:G\nV:1 name="Whistle" ' +
-        ...     'snm="wh"\nB3 A3 | G6 | B3 A3 | G6 ||\nV:2 name="violin" ' +
-        ...     'snm="v"\nBdB AcA | GAG D3 | BdB AcA | GAG D6 ||\nV:3 name="Bass" ' +
-        ...     'snm="b" clef=bass\nD3 D3 | D6 | D3 D3 | D6 ||')
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStr)
-        >>> ah.definesMeasures()
-        True
-
-        >>> abcStr = 'M:6/8\nL:1/8\nK:G\nB3 A3 G6 B3 A3 G6'
-        >>> ah = abcFormat.ABCHandler()
-        >>> junk = ah.process(abcStr)
-        >>> ah.definesMeasures()
-        False
-        '''
-        if not self.tokens:
-            raise ABCHandlerException('must process tokens before calling split')
-        count = 0
-
-        for t in self.tokens:
-            if isinstance(t, ABCBar) and t.isRegular():
-                # must define at least 2 regular barlines
-                # this leave out cases where only double bars are given
-                count += 1
-                # forcing the inclusion of two measures to count
-                if count >= 2:
-                    return True
-        return False
+class ABCVoice(ABCHandler):
+    def __init__(self, voiceId: str, tokens: Optional[List[ABCToken]] = None):
+        super().__init__(tokens)
+        self.voiceId = voiceId
 
     def splitByMeasure(self) -> List['ABCHandlerBar']:
         r'''
@@ -2846,7 +2578,6 @@ class ABCHandler():
             if bartokens:
                 yield ABCHandlerBar(bartokens)
 
-
         tokeniter = iter(self.tokens)
 
         # At first get all Header tokens
@@ -2891,220 +2622,167 @@ class ABCHandler():
 
         return barHandler
 
-    def process(self, src: Optional[str]=None) -> ABCTune:
-        if src:
-            self.tokenize(src)
-
-        # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
-        # Do not process tokens)
-        abcTune = self.splitByVoice()
-
-        for voice in abcTune.voices:
-            voice.process()
-
-        return abcTune
-
-
-class ABCHandlerVoice(ABCHandler):
-    # tokens are ABC objects in a linear stream
-    def __init__(self, tokens: List[ABCToken], voiceId: str = '1', abcVersion: Optional[ABCVersion] = None):
-        super().__init__(tokens=tokens, abcVersion=abcVersion)
-        self.voiceId = voiceId
-        self.transposition = 0
-        self.octave = None
-        self.clef = None
-        self.subname = ''
-        self.name = ''
-
-        self._measures = None
-
-    def process(self) -> 'ABCHandlerVoice':
-        # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
-        # Do not process tokens
-        tokenProcessor = ABCVoiceProcessor()
-        self.tokens = list(tokenProcessor.process(self))
-        return self
-
-    @property
-    def measures(self):
-        if self._measures is None:
-            self._measures = self.splitByMeasure()
-
-        return self._measures
-
-class ABCHandlerVoiceOverlay(ABCHandler):
-    # tokens are ABC objects in a linear stream
-    def __init__(self, abcVersion: Optional[ABCVersion]=None):
-        super().__init__(abcVersion=abcVersion)
-        self.overlayId = None
-
-    def process(self, tokenProcessor: 'ABCVoiceProcessor') -> 'ABCHandlerVoice':
-        # Use for processing an extra Object, reduce class overhead in ABCHandlerBar
-        # Do not process tokens
-        self.tokens = list(tokenProcessor.process(self))
-        return self
-
 class ABCHandlerBar(ABCHandler):
-    '''
-    A Handler specialized for storing bars. All left
-    and right bars are collected and assigned to attributes.
-    '''
+    pass
 
-    # divide elements of a character stream into objects and handle
-    # store in a list, and pass global information to components
-
-    def __init__(self, tokens: Optional[List[ABCToken]] = None,
-                 left: Optional[ABCBar] = None,
-                 rigth: Optional[ABCBar] = None):
-
-        # tokens are ABC objects in a linear stream
-        super().__init__(tokens)
-        self.leftBarToken: Optional[ABCBar] = left
-        self.rightBarToken: Optional[ABCBar] = rigth
-
-    def addOverlay(self, tokens: List[ABCToken], overlayId: str):
-        ol = ABCVoiceOverlay(src='&')
-        ol.handler.tokens = tokens
-        ol.handler.overlayId = overlayId
-        self.tokens.append(ol)
-
-    def __add__(self, other):
-        ah = self.__class__()  # will get the same class type
-        ah.tokens = self.tokens + other.tokens
-        # get defined tokens
-        for barAttr in ('leftBarToken', 'rightBarToken'):
-            bOld = getattr(self, barAttr)
-            bNew = getattr(other, barAttr)
-            if bNew is None and bOld is None:
-                pass  # nothing to do
-            elif bNew is not None and bOld is None:  # get new
-                setattr(ah, barAttr, bNew)
-            elif bNew is None and bOld is not None:  # get old
-                setattr(ah, barAttr, bOld)
-            else:
-                # if both ar the same, assign one
-                if bOld.src == bNew.src:
-                    setattr(ah, barAttr, bNew)
-                else:
-                    # might resolve this by ignoring standard bars and favoring
-                    # repeats or styled bars
-                    environLocal.printDebug(['cannot handle two non-None bars yet: got bNew, bOld',
-                                             bNew, bOld])
-                    # raise ABCHandlerException('cannot handle two non-None bars yet')
-                    setattr(ah, barAttr, bNew)
-
-        return ah
-
-_TOKEN_PROCESS_CACHE = {}
 
 class ABCTokenProcessor():
-    def __init__(self, abcVersion: Optional[ABCVersion]=None):
-        self.abcVersion = abcVersion
 
-    def process(self, handler: ABCHandlerVoice) -> Iterator[ABCToken]:
-        '''
-        Process all token objects any supply contextual informations.
+    def __init__(self, abcVersion: Optional[ABCVersion] = None):
+        self.abcVersion=abcVersion
 
-        Each token class calls a method named "process_{token.__class.__name__}"
-        for processing. If no method with this name has found it will search for a
-        method of one of his base classes.
-        '''
-        # if not isinstance(handler, ABCHandlerVoice):
-        #    raise ABCHandlerException(f'Cannot process {handler}, a <ABCHandlerVoice is required !>')
+    def process_token(self, token: ABCToken):
+        """
+        Process the token.
+        If the process method of the token return not None or no processs method exists
+        append the token to the ABCHandler.
+        """
+        process_method = getattr(self, f'process_{token.__class__.__name__}', None)
+        if process_method is None:
+            # find a process method for the token by super class name
+            for token_base_class in token.__class__.__bases__:
+                token_method_name = f'process_{token_base_class.__name__}'
+                if hasattr(self, token_method_name):
+                    process_method = getattr(self, token_method_name)
+                    break
 
-        self.handler = handler
-        if self.abcVersion is None:
-            self.abcVersion = handler.abcVersion
+        if process_method is not None:
+            if process_method(token) is None:
+                return
 
-        self.accidentalPropagation = self._accidental_propagation()
-        tokenIter = iter(handler.tokens)
+        return token
 
-        while True:
-            # get a token from the token iteratur until the StopIteration exception has raised
-            try:
-                token = next(tokenIter)
-                if isinstance(token, ABCSymbol):
-                    # this is a special case, we replace the symbol token
-                    # with one or more user defined tokens
-                    try:
-                        # Lookup the symbol in the userDefinedSymbols dict
-                        # Has a default symbol dict as fallback.
-                        symbol_tokens = token.lookup(self.userDefinedSymbols)
-                        # chain the symbols in front of tokenIter and continue iterating
-                        tokenIter = itertools.chain(symbol_tokens, tokenIter)
-                        continue
-                    except ABCTokenException as e:
-                        # Not defined symbol
-                        environLocal.printDebug([e])
-                        continue
 
-                # Caching the method lookup has no performance benefits.
-                # find a process method for the token by class name
-                try:
-                    # some tiny speed up
-                    token_process_method = _TOKEN_PROCESS_CACHE[(self, token.__class__)]
-                except KeyError:
-                    token_process_method = getattr(self, f'process_{token.__class__.__name__}', None)
+class ABCHeaderMixin():
+    def __init__(self, parent=None):
+        self._header = {
+            'instructions': {},
+            'composers': [],
+            'titles': [],
+            'user_defined': {}
+        } if parent is None else deepcopy(parent._header)
 
-                    # find a process method for the token by super class name
-                    if token_process_method is None:
-                        for token_base_class in token.__class__.__bases__:
-                            token_method_name = f'process_{token_base_class.__name__}'
-                            if hasattr(self, token_method_name):
-                                token_process_method = getattr(self, token_method_name)
-                                break
-                        else:
-                            environLocal.printDebug([f'No processing method for token: "{token}" found.'])
+    def __getattr__(self, item):
+        return self._header.get(item, None)
 
-                    _TOKEN_PROCESS_CACHE[(self, token.__class__.__name__)] = token_process_method
+    def __setattr__(self, item, value):
+        self._header[item] = value
 
-                if token_process_method is not None:
-                    token_process_method(token)
-
-                if token is not None:
-                    yield token
-
-            except StopIteration:
-                # replace tokens with the collected tokens
-                break
-
-from collections import defaultdict
 
 class ABCHeaderProcessor(ABCTokenProcessor):
-    def __init__(self, abcVersion: Optional[ABCVersion]=None):
+    def __init__(self, header: ABCHeaderMixin, abcVersion: Optional[ABCVersion] = None):
         super().__init__(abcVersion)
-        self._tune: Optional
-        self.abcVoices = defaultdict(list)
-        self.titles = []
-        self.composers = []
-        self.referenceNumber = None
-        self.origin = None
+        self.header = header
 
-    def process_ABCVoice(self, token: 'abcFormat.ABCVoice'):
-        if token.voiceId == '*':
-            # the '*' id address all voices
-            for abcVoiceTokens in self.abcVoices.values():
-                abcVoiceTokens.append(token)
-        elif token.voiceId in self.abcVoices:
-            self.abcVoices[token.voiceId].append(token)
-        else:
-            # for new introduced voices, get the '*' (all voices) tokens
-            self.abcVoices[token.voiceId] = self.abcVoices['*'] + [token]
+    def process_ABCInstruction(self, token: ABCInstruction):
+        self.header.instructions[token.key] = token.instruction
+
+    def process_ABCUnitNoteLength(self, token: ABCUnitNoteLength):
+        self.header.unit_note_length = token.defaultQuarterLength
+
+    def process_ABCMacro(self, token):
+        pass
+
+    def process_ABCUserDefinition(self, token: ABCUserDefinition):
+        self.header.user_defined = token.tokenize()
+
+    def process_Meter(self, token: ABCMeter):
+        self.header.meter = token
 
     def process_ABCTitle(self, token: ABCTitle):
-        self.titles.append(token.data)
+        self.header.titles.append(token.data)
 
     def process_ABCOrigin(self, token: ABCOrigin):
-        self.origin = token.data
+        self.header.origin = token.data
 
     def process_ABCComposer(self, token: ABCComposer):
-        self.composers.append(token.data)
+        self.header.composers.append(token.data)
 
-    def process_ABCReferenceNumber(self, token: ABCReferenceNumber):
-        # Convert referenceNumber to a number string
-        self.referenceNumber = token.data
 
-class ABCVoiceProcessor(ABCTokenProcessor):
+class ABCTuneHeaderProcessor(ABCHeaderProcessor):
+    def __init__(self, header: ABCHeaderMixin, abcVersion: Optional[ABCVersion] = None):
+        super().__init__(header, abcVersion)
+        self.header['voice'] = { '*': ABCVoiceField('V:*') }
+
+    def process_ABCKey(self, token: ABCKey):
+        self.header.keySig = token.getKeySignatureObject()
+
+    def process_ABCTempo(self, token: ABCTempo):
+        self.header.tempo = token
+
+    def process_ABCVoice(self, token: ABCVoiceField):
+        voice = self.header.voice
+        if token.voiceId == '*':
+            # the '*' id address all voices
+            for voiceId in voice:
+                voice[voiceId] = voice[token.voiceId] | token
+
+        elif token.voiceId in voice:
+            voice[token.voiceId] = voice[token.voiceId] | token
+        else:
+            # for new introduced voices, get the '*' (all voices) tokens
+           voice[token.voiceId] = voice['*'] | token
+
+
+class ABCTune(ABCHeaderMixin):
+    def __init__(self, referenceNumber: int, tuneBook: 'ABCTuneBook'):
+        super().__init__(parent=tuneBook)
+        self.referenceNumber = referenceNumber
+        self.abcVersion = tuneBook.abcVersion
+
+        # Each voice got his own Processor
+        self._voiceProcessors : Dict[str, ABCBodyProcessor] = {}
+        self._activeProcessor : Optional[ABCBodyProcessor] = None
+
+        self._headerProcessor = ABCHeaderProcessor(
+            header=self, abcVersion=tuneBook.abcVersion
+        )
+
+        # Use extra Processors for voiceOverlays
+        self._overlayProcessors: Dict[str, ABCBodyProcessor] = {}
+
+    @property
+    def voices(self):
+        return [vp.handler for vp in self._activeVoiceProcessor.values]
+
+    def process_token(self, token : ABCToken):
+        if self._activeProcessor is None:
+            self._headerProcessor.process_token(token)
+            if isinstance(token, ABCKey):
+                self._activeProcessor = ABCBodyProcessor(
+                    handler=ABCVoice(voiceId='1'),
+                    tune=self
+                )
+                self._voiceProcessors['1'] = self._activeProcessor
+        else:
+            self._activeProcessor.process_token(token)
+
+
+class ABCTuneBook(ABCHeaderMixin):
+    def __init__(self, abcVersion: Optional[ABCVersion]=None):
+        self.abcVersion = abcVersion
+        self.tunes = {}
+        self._headerProcessor = None
+
+    def process(self, src: str):
+        if self.abcVersion is None:
+            self.abcVersion = parseABCVersion(src)
+
+        self._headerProcessor = ABCHeaderProcessor(
+            header=self, abcVersion=self.abcVersion
+        )
+        target = self._headerProcessor
+
+        for token in tokenize(src, abcVersion=self.abcVersion):
+            if isinstance(token, ABCReferenceNumber):
+                target = ABCTune(referenceNumber=token.data, tuneBook=self)
+                self.tunes[token.data] = target
+                continue
+
+            target.process_token(token)
+
+
+class ABCBodyProcessor(ABCTokenProcessor):
     '''
     An ABCHandler for tokens of a an abc voice.
 
@@ -3121,10 +2799,12 @@ class ABCVoiceProcessor(ABCTokenProcessor):
     New in v6.2 -- lineBreaksDefinePhrases -- does not yet do anything
     '''
 
-    def __init__(self, abcVersion: Optional[ABCVersion]=None):
-        super().__init__(abcVersion)
-        self.abcDirectives: Dict[str, str] = {}
-        self.userDefinedSymbols: Dict[str, List[ABCToken]] = {}
+    def __init__(self, handler: 'ABCVoice', tune: ABCTune):
+        super().__init__(abcVersion=tune.abcVersion)
+        self.tune = tune
+        self.handler = handler
+
+        self.lastBarToken = None
         self.activeSpanner = []
         self.lastKeySignature = None
         self.lastDefaultQL: Optional[float] = None
@@ -3139,12 +2819,8 @@ class ABCVoiceProcessor(ABCTokenProcessor):
         self.lastBrokenRhythm = None
         # On this Note, starts the last known lyric line(s)
         self.lastLyricNote: Optional[ABCGeneralNote] = None
-        self.handler: ABCHandlerVoice = None
         self.accidentalPropagation = self._accidental_propagation()
 
-        # Use an extra Overlay Proccesor for voice Overlays
-        self.overlayCounter = 0
-        self.overlayProcessors: List[ABCVoiceProcessor] = []
 
     def _accidental_propagation(self) -> str:
         '''
@@ -3161,21 +2837,43 @@ class ABCVoiceProcessor(ABCTokenProcessor):
         if not self.abcVersion or self.abcVersion < minVersion:
             return 'not'
 
-        if 'PROPAGATE-ACCIDENTALS' in self.abcDirectives:
-            return self.abcDirectives['PROPAGATE-ACCIDENTALS']
-        return 'pitch'  # Default per abc 2.1 standard
+        instructions = self.tune.header.instructions
+        if instructions is None or 'PROPAGATE-ACCIDENTALS' not in instructions:
+            return 'pitch'  # Default per abc 2.1 standard
+
+        return instructions['PROPAGATE-ACCIDENTALS']
+
+    def measure_end(self):
+        self.carriedAccidentals = {}
+        self.process_overlay()
+        self.overlayCounter = 0
+        self._active_tokens = self.tokens
+
+    def process_token(self, token: ABCToken):
+        if self.activeOverlay is None:
+            token = super().process_token(token)
+            self.handler.tokens.append(token)
+        else:
+            # process the overlay later
+            self.activeOverlay.handler.tokens.append(token)
+
+
+    def process_overlay(self):
+        pass
 
     def process_ABCArticulation(self, token: ABCArticulation):
         """
           Process ABCArticulation tokens
         """
         self.lastArticulations.append(token)
-        self.overlayCounter = 0
 
     def process_ABCBar(self, token: ABCBar):
-        self.carriedAccidentals = {}
-        self.overlayCounter = 0
+        self.measure_end()
         return token
+
+    def process_ABCMetadata(self, token: ABCMetadata):
+        if not token.inlined:
+            self.measure_end()
 
     def process_ABCBrokenRhythm(self, token: ABCBrokenRhythm):
         """
@@ -3190,15 +2888,17 @@ class ABCVoiceProcessor(ABCTokenProcessor):
         """
         self.process_ABCGeneralNote(token)
         token.carriedAccidentals = self.carriedAccidentals
-        cp = ABCVoiceProcessor(abcVersion=self.abcVersion)
+        cp = ABCVoice(voiceID='', tune=self.tune)
 
         cp.carriedAccidentals = self.carriedAccidentals
         cp.lastKeySignature = self.lastKeySignature
         cp.lastDefaultQL = self.lastDefaultQL
-        #cp.lastOctaveTransposition = self.lastOctaveTransposition
 
         # @TODO: create a ChordProcessor
-        token.subTokens = list(cp.process(ABCHandler(token.subTokens)))
+        for chordToken in token.subTokens:
+            cp.process_token(chordToken)
+
+        token.subTokens = cp.tokens
         return token
 
     def process_ABCExpression(self, token: ABCExpression):
@@ -3269,39 +2969,46 @@ class ABCVoiceProcessor(ABCTokenProcessor):
         self.lastGraceToken = None
 
     def process_ABCLyrics(self, token: ABCLyrics):
+        self.process_overlay()
         if self.lastLyricNote is None:
             environLocal.printDebug(['Found lyrics but no notes to align'])
         else:
             self.lastLyricNote.lyrics.append(token)
 
     def process_ABCMeter(self, token: ABCMeter):
+        self.process_ABCMetadata(token)
         self.lastTimeSignatureObj = token.getTimeSignatureObject()
         if self.lastDefaultQL is None:
             self.lastDefaultQL = token.defaultQuarterLength
         return token
 
     def process_ABCKey(self, token: ABCKey):
+        self.process_ABCMetadata(token)
         self.lastKeySignature = token.getKeySignatureObject()
         self.lastOctaveTransposition = token.octave
         return token
 
     def process_ABCUnitNoteLength(self, token: ABCUnitNoteLength):
+        self.process_ABCMetadata(token)
         self.lastDefaultQL = token.defaultQuarterLength
-        return token
 
-    def process_ABCVoice(self, token: ABCVoice):
+    def process_ABCVoice(self, token: ABCVoiceField):
+        self.process_ABCMetadata(token)
+        self.tune.header.process_ABCVoice(token)
+
+        # if this Voice is new, create a new voice instance in the tune
+        if token.voiceId not in self.tune.voices:
+            self.tune.voices[token.voiceId] = ABCVoice(voiceId=token.voiceId, tune=self.tune)
+
+        # Change the active voice in the tune
+        self.tune._active_voice = self.tune.voices[token.voiceId]
+
+        # @TODO: Why this ? -
         self.lastLyricNote = None
-        # collect relevant abcVoice tokens
-        #if token.voiceId== self.handler.voiceId or token.voiceId == '*':
-        return token
 
     def process_ABCInstruction(self, token: ABCInstruction):
-        if token.key:
-            self.abcDirectives[token.key] = token.data
-            if token.key == 'propagate-accidentals':
-                self.accidental_propagation = self.accidentalPropagation()
-
-        return token
+        self.process_ABCMetadata(token)
+        self.tune.header.process_ABCInstruction(token)
 
     def process_ABCNote(self, token: ABCNote):
         self.process_ABCGeneralNote(token)
@@ -3320,17 +3027,14 @@ class ABCVoiceProcessor(ABCTokenProcessor):
         return token
 
     def process_ABCParenStop(self, token: ABCParenStop):
-        # @TODO: we don't need this, base class process method is called anyway
         if self.activeSpanner:
             self.activeSpanner.pop()
-        return token
 
     def process_ABCSpanner(self, token: ABCSpanner):
         """
         Proecss ABCSpanner tokens
         """
         self.activeSpanner.append(token)
-        return token
 
     def process_ABCTie(self, token: ABCTie):
         """
@@ -3341,7 +3045,6 @@ class ABCVoiceProcessor(ABCTokenProcessor):
         elif self.lastNoteToken:
             self.lastNoteToken.tie = 'start'
         self.lastTieToken = token
-        return token
 
     def process_ABCTuplet(self, token: ABCTuplet):
         """
@@ -3356,37 +3059,43 @@ class ABCVoiceProcessor(ABCTokenProcessor):
         return token
 
     def process_ABCUserDefinition(self, token: ABCUserDefinition):
-        try:
-            definition = token.tokenize()
-            if definition is None and token.symbol in self.userDefinedSymbols:
-                # return value of None indicates the symbol definition should deleted
-                del self.userDefinedSymbols[token.symbol]
-            else:
-                self.userDefinedSymbols[token.symbol] = list(definition)
-        except ABCTokenException as e:
-            environLocal.printDebug(['Creating token form UserDefined failed.', e])
-        return token
+        self.process_ABCMetadata(token)
+        self.tune.header.process_ABCUserDefinition(token)
 
     def process_ABCVoiceOverlay(self, token: ABCVoiceOverlay):
         # Count the overly tokens in a bar
         self.overlayCounter += 1
-        if self.overlayCounter > len(self.overlayProcessors):
-            overlayProcessor = ABCVoiceProcessor(abcVersion=self.abcVersion)
-            overlayProcessor.abcDirectives = self.abcDirectives
-            overlayProcessor.userDefinedSymbols = self.userDefinedSymbols
-            self.overlayProcessors.append(overlayProcessor)
-        else:
-            overlayProcessor = self.overlayProcessors[self.overlayCounter]
+        self.process_overlay()
+
+        if self.overlayCounter >
+            self.activeOverlay = ABCVoice(
+                voiceId=f'{self.voiceId}_{self.overlayCounter}',
+                tune=self.tune
+            )
+        se
 
         # update relevant context to the overlay TokenProcessor
-        overlayProcessor.lastDefaultQL = self.lastDefaultQL
-        overlayProcessor.lastKeySignature = self.lastKeySignature
-        overlayProcessor.lastTimeSignatureObj = self.lastTimeSignatureObj
-        overlayProcessor.carriedAccidentals = {}
-        token.handler.overlayId = f'{self.handler.voiceId}_{self.overlayCounter}'
-        token.handler.process(overlayProcessor)
-
+        self.activeOverlay.lastDefaultQL = self.lastDefaultQL
+        self.activeOverlay.lastKeySignature = self.lastKeySignature
+        self.activeOverlay.lastTimeSignatureObj = self.lastTimeSignatureObj
+        self.activeOverlay.carriedAccidentals = {}
         return token
+
+
+class ABCVoiceOverlayProcessor(ABCBodyProcessor):
+
+    def process_token(self, token: ABCToken):
+        if isinstance(token, ABCMetadata) and not token.inlined:
+            
+        if
+            token = super().process_token(token)
+            self.handler.tokens.append(token)
+        else:
+            # process the overlay later
+            self.activeOverlay.handler.tokens.append(token)
+
+
+
 
 
 # ------------------------------------------------------------------------------

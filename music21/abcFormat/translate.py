@@ -144,7 +144,7 @@ class ABCHeaderTranslator(ABCTranslator):
         super().__init__()
         self.midi = {}
         # contains V: tokens (ABCVoice) for each voice
-        self.abcVoices: Dict[str, List[abcFormat.ABCVoice]] = { '*': [] }
+        self.abcVoices: Dict[str, List[abcFormat.ABCVoiceField]] = {'*': []}
         self.abcKey  = None
         self.abcMeter  = None
         self.tempo = None
@@ -162,7 +162,7 @@ class ABCHeaderTranslator(ABCTranslator):
         super().translate(abcHandler, m21Target)
         self.m21Target.insert(0, self.metadata)
 
-    def translate_ABCVoice(self, token: 'abcFormat.ABCVoice'):
+    def translate_ABCVoice(self, token: 'abcFormat.ABCVoiceField'):
         if token.voiceId == '*':
             # the '*' id address all voices
             for abcVoiceTokens in self.abcVoices.values():
@@ -269,7 +269,7 @@ class ABCTokenTranslator(ABCTranslator):
             self.octave_transposition = token.octave
         return ks
 
-    def translate_ABCVoice(self, token: 'abcFormat.ABCVoice'):
+    def translate_ABCVoice(self, token: 'abcFormat.ABCVoiceField'):
         if token.voiceId == '*':
             environLocal.printDebug(['Void "*" found in body context'])
         else:
