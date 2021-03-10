@@ -669,6 +669,9 @@ class ABCVoiceField(ABCMetadata, ABCClef):
                 environLocal.warn(f'Illegal value "{self.stem}" for the voice property stem (up/down).')
                 self.stem = None
 
+        def __or__():
+            o = self.__class__
+            return
 
 class ABCTempo(ABCMetadata):
     """
@@ -1167,7 +1170,7 @@ class ABCDirective(ABCToken):
     TOKEN_REGEX = '%%.*'
 
     def __new__(cls, src: str):
-        return ABCInstruction(f'I:{src[2:]}')
+        return ABCInstruction(f'I:{src}')
 
 
 class ABCVoiceOverlay(ABCToken):
@@ -2165,11 +2168,8 @@ class ABCChord(ABCGeneralNote):
 
         # tokenize the inner string of the chord.
         # Only articulations, expressions and notes are relevant
-        self.subTokens = [t for t in tokenize(self.innerStr, abcVersion=abcVersion) if
-                  isinstance(t, (ABCArticulation, ABCExpression, ABCNote))]
-
-        self._first_note: Optional[ABCNote] = next((t for t in self.subTokens
-                                                    if isinstance(t, ABCNote)), None)
+        self.subTokens = []
+        self.first_note = None
 
     @property
     def isEmpty(self) -> bool:
@@ -2177,7 +2177,7 @@ class ABCChord(ABCGeneralNote):
         A chord without a note is empty even if tokens
         of other types are present.
         """
-        return self._first_note is None
+        return self.first_note is None
 
     def quarterLength(self, defaultQuarterLength: Optional[float] = None):
         """
@@ -2653,19 +2653,15 @@ class ABCTokenProcessor():
         return token
 
 
-class ABCHeader():
-    def __init__(self, parent=None):
-        if parent is None:
-            d = {
-                'instructions': {},
-                'composers': [],
-                'titles': [],
-                'user_defined': {}
-            }
-        else:
-            d = copy.deepcopy(parent.header)
-
-        self._attr = d
+class ABCHeader(ABCTokenProcessor):
+    def __init__(self, abcVersion: Optional[ABCVersion] = None):
+        self.__dict__['_attr'] = {
+            'instructions': {},
+            'composers': [],
+            'titles': [],
+            'user_defined': {}
+        }
+        super().__init__(abcVersion)
 
     def __getattr__(self, item):
         return self._attr.get(item, None)
@@ -2673,51 +2669,54 @@ class ABCHeader():
     def __setattr__(self, item, value):
         self._attr[item] = value
 
-
-class ABCHeaderProcessor(ABCTokenProcessor):
-    def __init__(self, header: ABCHeaderMixin, abcVersion: Optional[ABCVersion] = None):
-        super().__init__(abcVersion)
-        self.header = header
-
     def process_ABCInstruction(self, token: ABCInstruction):
-        self.header.instructions[token.key] = token.instruction
+        self.instructions[token.key] = token.instruction
 
     def process_ABCUnitNoteLength(self, token: ABCUnitNoteLength):
-        self.header.unit_note_length = token.defaultQuarterLength
+        self.defaultQuarterLength = token.defaultQuarterLength
 
     def process_ABCMacro(self, token):
         pass
 
+    def process_ABCReferenceNumber(self, token: ABCReferenceNumber):
+        raise HeaderEnd()
+
     def process_ABCUserDefinition(self, token: ABCUserDefinition):
-        self.header.user_defined = token.tokenize()
+        self.user_defined = token.tokenize()
 
     def process_Meter(self, token: ABCMeter):
-        self.header.meter = token
+        self.meter = token
 
     def process_ABCTitle(self, token: ABCTitle):
-        self.header.titles.append(token.data)
+        self.titles.append(token.data)
 
     def process_ABCOrigin(self, token: ABCOrigin):
-        self.header.origin = token.data
+        self.origin = token.data
 
     def process_ABCComposer(self, token: ABCComposer):
-        self.header.composers.append(token.data)
+        self.composers.append(token.data)
 
 
-class ABCTuneHeaderProcessor(ABCHeaderProcessor):
-    def __init__(self, header: ABCHeaderMixin, abcVersion: Optional[ABCVersion] = None):
+class ABCTuneHeader(ABCHeader):
+    def __init__(self, parent: Optional[ABCHeader]=None):
+        super().__init__(
+            abcVersion=None if parent is None else parent.abcVersion
+        )
+
+        if parent is not None:
+            self.__dict__['_attr'] = copy.deepcopy(parent._attr)
+
         self.voice = { '*': ABCVoiceField('V:*') }
-        super().__init__(header, abcVersion)
 
     def process_ABCKey(self, token: ABCKey):
-        self.header.keySig = token.getKeySignatureObject()
+        self.keySig = token.getKeySignatureObject()
         raise HeaderEnd()
 
     def process_ABCTempo(self, token: ABCTempo):
-        self.header.tempo = token
+        self.tempo = token
 
     def process_ABCVoice(self, token: ABCVoiceField):
-        voice = self.header.voice
+        voice = self.voice
         if token.voiceId == '*':
             # the '*' id address all voices
             for voiceId in voice:
@@ -2736,33 +2735,27 @@ class HeaderEnd(Exception):
 
 class ABCTune():
     def __init__(self, referenceNumber: int, tuneBook: 'ABCTuneBook'):
-        self.header = ABCHeader()
+        self.header = ABCTuneHeader(parent=tuneBook.header)
         self.referenceNumber = referenceNumber
-        self.abcVersion = tuneBook.abcVersion
 
         # Each voice got his own Processor
         self.voiceProcessors : Dict[str, ABCBodyProcessor] = {}
         self.activeVoiceProcessor : Optional[ABCBodyProcessor] = None
 
-        self._headerProcessor = ABCTuneHeaderProcessor(
-            header=self, abcVersion=tuneBook.abcVersion
-        )
-        super().__init__(parent=tuneBook)
-
     @property
     def voices(self):
         return [vp.handler for vp in self.voiceProcessor.values()]
 
-    def process(self, tokens : List[ABCToken]):
+    def process(self, tokens : Union[List[ABCToken], Iterator[ABCToken]]):
         if not isinstance(tokens, Iterator):
             tokens = iter(tokens)
 
         try:
             for token in tokens:
-                self._headerProcessor.process_token(token)
+                self.header.process_token(token)
             else:
+                # No body in the tune
                 return
-
         except HeaderEnd:
             # The KeyField token raise an HeaderEnd exceptions
             pass
@@ -2772,26 +2765,27 @@ class ABCTune():
             self.activeVoiceProcessor.process_token(token)
 
 
-class ABCTuneBook(ABCHeaderMixin):
+class ABCTuneBook():
     def __init__(self, abcVersion: Optional[ABCVersion]=None):
         super().__init__()
-        self.abcVersion = abcVersion
         self.tunes = {}
-        self._headerProcessor = None
+        self.header = ABCHeader(abcVersion)
 
-    def process(self, src: str):
-        if self.abcVersion is None:
-            self.abcVersion = parseABCVersion(src)
+    @property
+    def abcVersion(self):
+        return self.header.abcVersion
 
-        self._headerProcessor = ABCHeaderProcessor(
-            header=self, abcVersion=self.abcVersion
-        )
+    def process(self, src: Union[str, List[ABCToken], Iterator[ABCToken]]):
+        if self.header.abcVersion is None:
+            self.header.abcVersion = parseABCVersion(src)
 
-        target = self._headerProcessor
+        if isinstance(src, str):
+            tokens = tokenize(src, abcVersion=self.abcVersion)
+        elif not isinstance(src, Iterator):
+            tokens = iter(src)
+        else:
+            tokens = src
 
-
-
-        tokens = tokenize(src, abcVersion=self.abcVersion)
         for token in tokens:
             if isinstance(token, ABCReferenceNumber):
                 active_tune = ABCTune(referenceNumber=token.data, tuneBook=self)
@@ -2830,16 +2824,27 @@ class ABCBodyProcessor(ABCTokenProcessor):
     '''
 
     def __init__(self, voiceId: str, tune: ABCTune):
-        super().__init__(abcVersion=tune.abcVersion)
+        tune_header = tune.header
+        super().__init__(abcVersion=tune_header.abcVersion)
+
         self.voiceId = voiceId
         self.tokens = []
         self.tune = tune
         self.lastBarToken = None
         self.activeSpanner = []
-        self.lastKeySignature = None
-        self.lastDefaultQL: Optional[float] = None
+
+        self.lastKeySignature = tune_header.keySignature
+
+        self.timeSignature = None
+        meter = tune_header.meter
+        if meter is not None:
+            self.timeSignature = meter.getTimeSignatureObject()
+
+        self.lastDefaultQL = tune_header.defaultQuarterLength
+        if self.lastDefaultQL is None:
+            self.lastDefaultQL = 0.5 if meter is None else meter.defaultQuarterLength()
+
         self.carriedAccidentals: Dict[str, str] = {}
-        self.lastTimeSignatureObj = None  # an m21 object
         self.lastTupletToken = None  # a token obj; keeps count of usage
         self.lastTieToken = None
         self.lastGraceToken = None
@@ -2956,19 +2961,23 @@ class ABCBodyProcessor(ABCTokenProcessor):
         Process ABCChord token, calls process_ABCGeneralNote first
         """
         self.process_ABCGeneralNote(token)
-        token.carriedAccidentals = self.carriedAccidentals
-        cp = ABCVoice(voiceID='', tune=self.tune)
 
+        cp = ABCBodyProcessor(voiceId=f'{self.voiceId}-chord', tune=self.tune)
         cp.carriedAccidentals = self.carriedAccidentals
         cp.lastKeySignature = self.lastKeySignature
         cp.lastDefaultQL = self.lastDefaultQL
+        token.carriedAccidentals = self.carriedAccidentals
 
-        # @TODO: create a ChordProcessor
-        for chordToken in token.subTokens:
+        cp.tokens = token.subTokens
+
+        for chordToken in tokenize(token.innerStr, abcVersion=self.abcVersion):
             cp.process_token(chordToken)
 
-        token.subTokens = cp.tokens
-        return token
+        token.first_note  = next(
+            (t for t in token.subTokens if isinstance(t, ABCNote)), None)
+
+        if not token.isEmpty:
+            return token
 
     def process_ABCExpression(self, token: ABCExpression):
         """
@@ -3038,7 +3047,6 @@ class ABCBodyProcessor(ABCTokenProcessor):
         self.lastGraceToken = None
 
     def process_ABCLyrics(self, token: ABCLyrics):
-        self.process_overlay()
         if self.lastLyricNote is None:
             environLocal.printDebug(['Found lyrics but no notes to align'])
         else:
@@ -3114,7 +3122,7 @@ class ABCBodyProcessor(ABCTokenProcessor):
         """
         Process ABCTuplet tokens
         """
-        token.updateRatio(self.lastTimeSignatureObj)
+        token.updateRatio(self.timeSignature)
         # set number of notes that will be altered
         # might need to do this with ql values, or look ahead to nxt
         # token
