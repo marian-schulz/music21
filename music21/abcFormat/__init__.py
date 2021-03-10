@@ -122,9 +122,9 @@ RE_KEY_EXP = re.compile(r'(?P<tonic>(H[pP])' +
 
 # ABC Clef sytntax
 # @TODO: Multiline - realy ?
-CLEF_RE = re.compile(r'(?P<_clef_name>clef\s*=\s*\S+(?!\S))' +
-        r'|(?P<_octave>octave=[+\-]?[0-9](?!\S))' +
-        r'|(?P<_transpose>t(ranspose)?\s*=\s*[+\-]?[0-9]+(?!\S))' +
+CLEF_RE = re.compile(r'(?P<name>clef\s*=\s*\S+(?!\S))' +
+        r'|(?P<octave>octave=[+\-]?[0-9](?!\S))' +
+        r'|(?P<transpose>t(ranspose)?\s*=\s*[+\-]?[0-9]+(?!\S))' +
         r'|(?P<unamed>[^=]+?(?!\S))', re.MULTILINE)
 
 # ABC VOICE syntax
@@ -527,85 +527,69 @@ class ABCClef():
     }
 
     def __init__(self, data: str=''):
-        self._transpose: Optional[int] = None
-        self._octave: Optional[int] = None
-        self._clef_name: str = ''
-        self._ottava: str = ''
+        self.name = None
+        self.transpose = None
+        self.octave = None
 
         # list of unamed properties
         unamed  = []
         for m in CLEF_RE.finditer(data):
             k = m.lastgroup
             v = m.group()
-            if k in ['transpose', 'octave', 'clef_name']:
+            if k in ['transpose', 'octave', 'name']:
                 setattr(self, k, v.split('=')[1].lower().strip('"').strip())
             else:
                 unamed.append(v.lower().strip())
 
+
         # the clef name is allowed without clef=<name>
-        if self.clef_name is None:
+        if not self.name:
             for tag in unamed:
-                if tag in ABCClef._NAMES:
-                    self._clef_name = tag
-                elif tag in ABCClef._ALIAS:
-                    self._clef_name = ABCClef._ALIAS[tag]
-
-        if self.clef_name in ABCClef._ALIAS:
-            self._clef_name = ABCClef._ALIAS[self._clef_name]
-        elif self._clef_name not in ABCClef._NAMES:
-            if self._clef_name is not None:
-                environLocal.printDebug([f'Unknown clef name "{self.clef_name}" in abc source.'])
+                if tag in ABCClef._NAMES or tag in ABCClef._ALIAS:
+                    self.name = tag
 
 
-        # Optional ottava syntax
-        # change the octave and for bass & treble the related clefs
-        # if no
-        if self.clef_name in ['bass', 'treble']:
-            if '-8va' in unamed:
-                self._clef_name += '8va'
-            elif '-8vb' in unamed:
-                self._clef_name += '8vb'
 
-        if self._octave is not None:
-            self._octave = int(self.octave)
+        self.name = ABCClef._ALIAS.get(self.name, self.name)
 
-        if self._transpose is not None:
-            self._transpose = int(self.transpose)
+        # Optional ottava syntax for 8va & 8vb
+
+        if '-8va' in unamed:
+            ottava = '8va'
+        elif '-8vb' in unamed:
+            ottava = '8vb'
+        else:
+            ottava = None
+
+        if ottava:
+            if not self.name:
+                self.name='treble'
+
+            if self.name in ['bass', 'treble']:
+                self.name += ottava
+
+        if self.transpose is not None:
+            self.transpose = int(self.transpose)
+
+        if self.octave is not None:
+            self.octave = int(self.octave)
 
 
-    def join(self, other: 'ABCClef'):
+    def __or__(self, other: 'ABCClef'):
         '''
            Creates a new clef Object, with properties of this and other clef.
         '''
-        clf = ABCClef()
-        clf._transpose = self._transpose if other._transpose is None else other._transpose
-        clf._octave = self._octave if other._octave is None else other._octave
-        clf._name = self._name if other._name is None else other._name
-        clf._transposing_clef = ''
+        newobj = self.__class__('')
+        newobj.name = self.name if other.name is None else other.name
+        newobj.octave = self.octave if other.octave is None else other.octave
+        newobj.transpose = self.transpose if other.transpose is None else other.transpose
+        return newobj
 
-    @property
-    def transpose(self):
-        if self._transpose is None:
-            return 0
-        return self._transpose
-
-    @property
-    def octave(self):
-        if self._octave is None:
-            return 0
-        return self._octave
-
-    @property
-    def clef_name(self):
-        if self._clef_name:
-            return f"{self._clef_name}{self.otava}"
-        return 'treble'
-
-class ABCVoiceField(ABCMetadata, ABCClef):
+class ABCVoiceField(ABCMetadata):
 
     TOKEN_REGEX = makeMetaDataRegexpr('V')
 
-    def __init__(self, src):
+    def __init__(self, src: str):
         r"""
         The first value (required) of the field is the ID of the voice.
         Following optional properties follow the scheme property=<value>.
@@ -645,12 +629,11 @@ class ABCVoiceField(ABCMetadata, ABCClef):
         <music21.clef.TrebleClef>
         """
         super().__init__(src)
-        ABCClef.__init__(self, self.data)
 
-        self.voiceId: str = ''
-        self.name : Optional[str] = None
-        self.subname : Optional[str] = None
-        self.stem : Optional[str] = None
+        self.voiceId = None
+        self.name = None
+        self.subname = None
+        self.clef = ABCClef(self.data)
 
         for m in VOICE_RE.finditer(self.data):
             k = m.lastgroup
@@ -658,7 +641,7 @@ class ABCVoiceField(ABCMetadata, ABCClef):
             if k == 'id':
                 self.voiceId = v
             elif k in ['name', 'subname', 'stem']:
-                setattr(self, k, v.split('=')[1].strip().strip('"'))
+                setattr(v.split('=')[1].strip().strip('"'))
 
         if not self.voiceId:
             raise ABCTokenException('Required voice ID missing in abc voice field.')
@@ -666,12 +649,15 @@ class ABCVoiceField(ABCMetadata, ABCClef):
         if self.stem is not None:
             self.stem = self.stem.lower()
             if self.stem not in ['up', 'down']:
-                environLocal.warn(f'Illegal value "{self.stem}" for the voice property stem (up/down).')
                 self.stem = None
 
-        def __or__():
-            o = self.__class__
-            return
+    def __or__(self, other: 'ABCVoiceField'):
+        newobj = self.__class__(f'V:{self.voiceId}')
+        newobj.name = self.name if other.name is None else other.name
+        newobj.subname = self.subname if other.subname is None else other.subname
+        newobj.inlined = other.inlined
+        newobj.clef = self.clef | other.clef
+        return newobj
 
 class ABCTempo(ABCMetadata):
     """
@@ -2453,9 +2439,18 @@ class ABCHandler():
 
 
 class ABCVoice(ABCHandler):
-    def __init__(self, voiceId: str, tokens: Optional[List[ABCToken]] = None):
+    def __init__(self, voiceId: str, header: 'ABCTuneHeader', tokens: Optional[List[ABCToken]] = None):
         super().__init__(tokens)
         self.voiceId = voiceId
+
+        self.name = None
+        self.subname = None
+        self.clef = header.key.clef
+        voiceField = header.voice.get(voiceId, None)
+        if voiceField is not None:
+            self.name = voiceField.name
+            self.subname = voiceField.subname
+            self.clef = self.clef | voiceField.clef
 
     def splitByMeasure(self) -> List['ABCHandlerBar']:
         r'''
@@ -2708,26 +2703,28 @@ class ABCTuneHeader(ABCHeader):
 
         self.voice = { '*': ABCVoiceField('V:*') }
 
+    def get_voiceField(self, voiceId):
+        if voiceId not in self.voice:
+            self.voice[voiceId] = ABCVoiceField(f'V:{voiceId}')
+            self.voice[voiceId].clef = self.voice['*'].clef
+
+        return self.voice['voiceId']
+
     def process_ABCKey(self, token: ABCKey):
+        self.clef = token.clef
         self.keySig = token.getKeySignatureObject()
         raise HeaderEnd()
 
     def process_ABCTempo(self, token: ABCTempo):
         self.tempo = token
 
-    def process_ABCVoice(self, token: ABCVoiceField):
-        voice = self.voice
+    def process_ABCVoiceField(self, token: ABCVoiceField):
         if token.voiceId == '*':
             # the '*' id address all voices
-            for voiceId in voice:
-                voice[voiceId] = voice[token.voiceId] | token
+            for voiceId in self.voice:
+                self.voice[voiceId] = self.voice[token.voiceId] | token
 
-        elif token.voiceId in voice:
-            voice[token.voiceId] = voice[token.voiceId] | token
-        else:
-            # for new introduced voices, get the '*' (all voices) tokens
-           voice[token.voiceId] = voice['*'] | token
-
+        self.voice[token.voiceId] = self.get_voiceField(token.voiceId) | token
 
 class HeaderEnd(Exception):
     pass
@@ -2744,7 +2741,9 @@ class ABCTune():
 
     @property
     def voices(self):
-        return [vp.handler for vp in self.voiceProcessor.values()]
+        return [
+            ABCVoice(voiceId=vid, tokens=vp.tokens, header=self.header) for vid, vp in self.voiceProcessors.items()
+        ]
 
     def process(self, tokens : Union[List[ABCToken], Iterator[ABCToken]]):
         if not isinstance(tokens, Iterator):
@@ -2761,6 +2760,7 @@ class ABCTune():
             pass
 
         self.activeVoiceProcessor = ABCBodyProcessor(voiceId='1', tune=self)
+        self.voiceProcessors['1'] = self.activeVoiceProcessor
         for token in tokens:
             self.activeVoiceProcessor.process_token(token)
 
@@ -2835,8 +2835,12 @@ class ABCBodyProcessor(ABCTokenProcessor):
 
         self.lastKeySignature = tune_header.keySignature
 
+        self.voiceField = tune_header.get_voiceField(voiceId)
+        self.clef = tune_header.clef |  self.voiceField.clef
+
         self.timeSignature = None
         meter = tune_header.meter
+
         if meter is not None:
             self.timeSignature = meter.getTimeSignatureObject()
 
@@ -3066,18 +3070,26 @@ class ABCBodyProcessor(ABCTokenProcessor):
     def process_ABCUnitNoteLength(self, token: ABCUnitNoteLength):
         self.lastDefaultQL = token.defaultQuarterLength
 
-    def process_ABCVoice(self, token: ABCVoiceField):
-        self.tune.header.process_ABCVoice(token)
-
+    def process_ABCVoiceField(self, token: ABCVoiceField):
         # if this Voice is new, create a new voice instance in the tune
-        if token.voiceId not in self.tune.voices:
-            self.tune.voices[token.voiceId] = ABCVoice(voiceId=token.voiceId, tune=self.tune)
+        if token.voiceId not in self.tune.voiceProcessors:
+            self.tune.voiceProcessors[token.voiceId] = ABCBodyProcessor(voiceId=token.voiceId, tune=self.tune)
 
         # Change the active voice in the tune
-        self.tune._active_voice = self.tune.voices[token.voiceId]
+        self.tune.activeVoiceProcessor = self.tune.voiceProcessors[token.voiceId]
 
-        # @TODO: Why this ? -
-        self.lastLyricNote = None
+        headerVoiceField = self.tune.header.get_voiceField(token.voiceId)
+        if token.name is not None:
+            headerVoiceField.name = token.name
+
+        if token.subname is not None:
+            headerVoiceField.subname = token.subname
+
+        # return a clef token if clef has changed
+        newclef = self.clef | token.clef
+        if newclef != self.clef:
+            return newclef
+
 
     def process_ABCInstruction(self, token: ABCInstruction):
         self.tune.header.process_ABCInstruction(token)
